@@ -27,7 +27,7 @@
 
   function draw(canvas, config, payload) {
     var stacked = !!payload.stacked;
-    new Chart(canvas.getContext('2d'), {
+    var chart = new Chart(canvas.getContext('2d'), {
       type: payload.type || config.type || 'line',
       data: { labels: payload.labels, datasets: payload.datasets },
       options: {
@@ -49,6 +49,30 @@
         }
       }
     });
+
+    var root = document.documentElement;
+    if (!root.hasAttribute('data-mui-theme')) { return; }
+
+    function updateTheme() {
+      var dark = root.getAttribute('data-mui-theme') === 'dark';
+      var styles = getComputedStyle(document.body);
+      var text = dark ? styles.getPropertyValue('--mui-text-2').trim() : Chart.defaults.color;
+      var line = dark ? styles.getPropertyValue('--mui-border-strong').trim() : Chart.defaults.borderColor;
+      chart.options.color = text;
+      chart.options.plugins.legend.labels.color = text;
+      chart.options.plugins.title.color = text;
+      Object.keys(chart.scales).forEach(function (axis) {
+        var scale = chart.options.scales[axis];
+        scale.grid.color = line;
+        scale.border.color = line;
+        scale.ticks.color = text;
+        scale.title.color = text;
+      });
+      chart.update('none');
+    }
+
+    updateTheme();
+    new MutationObserver(updateTheme).observe(root, { attributeFilter: ['data-mui-theme'] });
   }
 
   function init() {
