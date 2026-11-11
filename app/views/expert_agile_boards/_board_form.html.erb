@@ -1,0 +1,34 @@
+<%# Board options panel: the configuration controls plus the buttons that act on
+    them. The controls themselves live in `_board_options` because the
+    saved-board form renders the same ones. %>
+
+<div id="query_form_with_buttons" class="hide-when-print">
+  <div id="query_form_content">
+    <%= render :partial => 'expert_agile_boards/board_options' %>
+  </div>
+
+  <p class="buttons hide-when-print">
+    <%= submit_tag l(:button_apply), :class => 'icon icon-checked', :name => nil %>
+    <%= link_to l(:button_clear), board_path_for(@project),
+                :class => 'icon icon-reload' %>
+    <%# Save and Edit are submits with a formaction, not links that rewrite the
+        form's action from an inline onclick. Both have to reach their target
+        carrying everything the user just configured, and the browser does
+        exactly that for free — no script, so the page still works under
+        `script-src 'self'`. Apply stays the first submit, so Enter in a filter
+        field still applies rather than saves. %>
+    <% if @query.new_record? && User.current.allowed_to?(:add_expert_agile_queries, @project, :global => true) %>
+      <%= submit_tag l(:button_save), :name => nil, :class => 'icon icon-save',
+                     :formaction => new_board_path_for(@project) %>
+    <% elsif @query.persisted? && @query.editable_by?(User.current) %>
+      <%# Carries the panel through to the edit form, so Edit opens the board as
+          it is on screen. A plain link would drop every unsaved tweak and the
+          user would be editing what was last saved instead. %>
+      <%= submit_tag l(:button_edit), :name => nil, :class => 'icon icon-edit',
+                     :formaction => edit_expert_agile_query_path(@query) %>
+      <%= link_to l(:button_delete), expert_agile_query_path(@query),
+                  :data => { :confirm => l(:text_are_you_sure) }, :method => :delete,
+                  :class => 'icon icon-del' %>
+    <% end %>
+  </p>
+</div>

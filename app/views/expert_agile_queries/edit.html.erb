@@ -1,0 +1,13 @@
+<h2><%= h @query.name %></h2>
+
+<%= form_tag(query_member_path(@query), :method => :put) do %>
+  <%= fields_for :query, @query do |f| %>
+    <%= render :partial => 'form', :locals => { :f => f } %>
+  <% end %>
+  <%= submit_tag l(:button_save) %>
+<% end %>
+
+<%# The panel is the board's own markup, so it needs the board's stylesheet. %>
+<% content_for :header_tags do %>
+  <%= stylesheet_link_tag 'expert_agile', :plugin => 'redmine_expert_agile' %>
+<% end %>

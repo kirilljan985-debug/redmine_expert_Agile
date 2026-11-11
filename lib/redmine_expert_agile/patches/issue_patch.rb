@@ -1,0 +1,149 @@
+# Adds the agile payload to Issue: the has_one association, story point
+# accessors, and a rank-ordered scope for the board.
+#
+# Included (not prepended) because nothing here overrides a core method — every
+# name is new. Where a core method genuinely needs wrapping we use prepend and
+# super, or UnboundMethod capture for helpers other plugins alias.
+module RedmineExpertAgile
+  module Patches
+    module IssuePatch
+      def self.apply!
+        return if Issue.included_modules.include?(self)
+
+        Issue.include(self)
+      end
+
+      def self.included(base)
+        base.class_eval do
+          # inverse_of matters: without it, ExpertAgileData#issue loads a fresh
+          # Issue from the database, so the sprint-change callback would look
+          # for `current_journal` on an object that never had one and the change
+          # would go unjournalled.
+          has_one :expert_agile_data, :dependent => :destroy, :foreign_key => 'issue_id',
+                                      :inverse_of => :issue
+          has_one :expert_agile_sprint, :through => :expert_agile_data, :source => :sprint
+
+          accepts_nested_attributes_for :expert_agile_data, :update_only => true
+
+          # Ordering for the board. Unranked issues go last with a stable
+          # tiebreaker, and the NULLS handling is written out because MySQL and
+          # PostgreSQL disagree on where NULLs sort by default.
+          scope :sorted_by_rank, lambda {
+            eager_load(:expert_agile_data).order(
+              Arel.sql("CASE WHEN #{ExpertAgileData.table_name}.position IS NULL THEN 1 ELSE 0 END ASC"),
+              Arel.sql("#{ExpertAgileData.table_name}.position ASC"),
+              Arel.sql("#{Issue.table_name}.id ASC")
+            )
+          }
+
+          # Core clears a fixed_version the new project cannot use when an issue
+          # moves (Issue#project=); nothing did the same for the sprint, so a
+          # moved issue stayed in a sprint its project never shares — invisible
+          # to that sprint's backlog, yet blocking it from being closed.
+          before_save :expert_agile_drop_unshared_sprint, :if => :will_save_change_to_project_id?
+
+          # A closed sprint keeps the issues done in it, and holds no open
+          # one. Reopening such an issue takes it out of that sprint, back to
+          # the backlog, rather than leaving open work in a finished sprint.
+          before_save :expert_agile_leave_closed_sprint, :if => :expert_agile_reopening?
+
+          # Defined on Issue itself, not in this module: accepts_nested_attributes_for
+          # generates the writer in a module included after this one, which
+          # would otherwise shadow it; `super` reaches that generated writer.
+          #
+          # When a user sets the attributes (Issue#safe_attributes= records who),
+          # only the two agile fields a form offers get through, and the sprint
+          # only for someone who may plan it — the backlog planner's permission.
+          # Without this the nested hash reached every column of the row (the
+          # board rank included), and anyone who may edit issues could plan them
+          # into sprints the planner would refuse them.
+          def expert_agile_data_attributes=(attributes)
+            user = @attributes_set_by
+            if user
+              attributes = attributes.respond_to?(:to_unsafe_h) ? attributes.to_unsafe_h : attributes.to_h
+              attributes = attributes.stringify_keys.slice(*RedmineExpertAgile::Patches::IssuePatch::AGILE_FORM_FIELDS)
+              attributes.delete('sprint_id') unless expert_agile_sprint_editable_by?(user)
+            end
+            super(attributes)
+          end
+
+          safe_attributes 'expert_agile_data_attributes',
+                          :if => lambda { |issue, user|
+                            issue.new_record? || user.allowed_to?(:edit_issues, issue.project)
+                          }
+        end
+      end
+
+      # The association row is created on demand, so callers never have to care
+      # whether it exists yet.
+      AGILE_FORM_FIELDS = %w(story_points sprint_id).freeze
+
+      def expert_agile_data!
+        expert_agile_data || build_expert_agile_data
+      end
+
+      # Planning an issue into a sprint is the backlog planner's permission,
+      # wherever the sprint is set from.
+      def expert_agile_sprint_editable_by?(user = User.current)
+        project.present? && user.allowed_to?(:manage_expert_agile_backlog, project)
+      end
+
+      def expert_agile_reopening?
+        return false unless will_save_change_to_status_id? && status && !status.is_closed?
+
+        IssueStatus.where(:id => status_id_in_database, :is_closed => true).exists?
+      end
+
+      # Under the sprint row's lock, so a completion of that sprint running
+      # right now is waited for and its outcome seen.
+      def expert_agile_leave_closed_sprint
+        data = expert_agile_data
+        return if data.nil? || data.sprint_id.nil?
+
+        # Locked by id first, read afterwards: a lock taken only on a row that
+        # is already closed would let a completion close it in between.
+        sprint = ExpertAgileSprint.lock.find_by(:id => data.sprint_id)
+        return unless sprint && sprint.closed?
+
+        data.sprint_id = nil
+      end
+
+      def expert_agile_drop_unshared_sprint
+        data = expert_agile_data
+        return if data.nil? || data.sprint_id.nil? || project.nil?
+        return if project.shared_expert_agile_sprints.where(:id => data.sprint_id).exists?
+
+        data.sprint_id = nil
+      end
+
+      def story_points
+        expert_agile_data&.story_points
+      end
+
+      def story_points=(value)
+        expert_agile_data!.story_points = value.presence
+      end
+
+      # Story points of this issue plus every descendant, which is what a parent
+      # card should show. Returns nil when nothing in the subtree is estimated,
+      # so the UI can distinguish "no estimate" from "estimated as zero".
+      #
+      # Only descendants `user` may see are counted, as core does for
+      # total_estimated_hours. A subtask can be private or live in a project
+      # the reader has no access to, and a total that includes it tells them
+      # how much work is hidden there.
+      def total_story_points(user = User.current)
+        # SUM over zero rows is NULL, so `pick` distinguishes "nothing in this
+        # subtree is estimated" (nil) from "the subtree sums to 0" in a single
+        # query. `sum` would flatten both to 0.
+        ExpertAgileData.where(:issue_id => self_and_descendants.visible(user).select(:id))
+                       .pick(Arel.sql('SUM(story_points)'))
+      end
+
+      # Whether the story point field applies to this issue at all.
+      def story_points_available?
+        RedmineExpertAgile.story_points_for_tracker?(tracker)
+      end
+    end
+  end
+end

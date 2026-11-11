@@ -1,0 +1,23 @@
+<%# One colour: a hex field that Coloris turns into a swatch button and a
+    picker, with the palette offered as swatches.
+
+    The text field is the whole contract. It posts #rrggbb, or '' for no
+    colour, and without JavaScript it is still a working hex field — Coloris
+    only adds the swatch and the popover on top. What the picker offers and how
+    it is labelled comes from the page's data-ea-coloris attribute, read by
+    expert_agile_colors.js, so nothing here is inline script.
+
+    Locals: name (form field name), id (unique per field), selected (stored
+    hex or nil), group_label (what this is the colour of). %>
+<span class="ea-color-field">
+  <%= text_field_tag name, selected,
+                     :id => id,
+                     :class => 'ea-color-input',
+                     :maxlength => 7,
+                     :size => 9,
+                     :placeholder => l(:label_none),
+                     :pattern => '#?[0-9a-fA-F]{3}([0-9a-fA-F]{3})?',
+                     :autocomplete => 'off',
+                     :spellcheck => 'false',
+                     :'aria-label' => "#{l(:label_expert_agile_color)}: #{group_label}" %>
+</span>

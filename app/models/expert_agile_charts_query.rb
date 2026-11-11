@@ -1,0 +1,161 @@
+# A saved chart: the same issue filters as a board, plus the chart selection
+# and an explicit date range.
+class ExpertAgileChartsQuery < ExpertAgileQuery
+  self.view_permission = :view_expert_agile_charts
+
+  scope :only_charts, -> { where(:type => name) }
+
+  def chart
+    value = options[:chart].to_s
+    RedmineExpertAgile::Charts::Registry.valid?(value) ? value : RedmineExpertAgile.default_chart
+  end
+
+  def chart=(value)
+    options[:chart] = RedmineExpertAgile::Charts::Registry.valid?(value) ? value.to_s : nil
+  end
+
+  def chart_unit
+    value = options[:chart_unit].to_s
+    RedmineExpertAgile::Charts::Base::UNITS.include?(value) ? value : 'issues'
+  end
+
+  def chart_unit=(value)
+    options[:chart_unit] = value.to_s
+  end
+
+  def interval
+    value = options[:interval].to_s
+    RedmineExpertAgile::Charts::Base::INTERVALS.include?(value) ? value : 'day'
+  end
+
+  def interval=(value)
+    options[:interval] = value.to_s
+  end
+
+  # The date range is stored as two explicit values.
+  #
+  # It is never recovered from generated SQL, which would silently break with
+  # any change to Redmine's sql_for_field output. The range is what it is: two
+  # dates.
+  # The longest range one chart covers. The x axis has a bucket per interval
+  # step and every history chart replays each issue per bucket, so an
+  # unbounded range let a single request (the charts permission is a read
+  # permission, grantable to anonymous) compute millions of buckets. Three
+  # years of days is far beyond any sprint or release chart.
+  MAX_RANGE_DAYS = 3 * 366
+
+  def date_from
+    from = parse_date(options[:date_from]) || default_date_from
+    [from, date_to - MAX_RANGE_DAYS].max
+  end
+
+  def date_from=(value)
+    options[:date_from] = value.presence && value.to_s
+  end
+
+  def date_to
+    parse_date(options[:date_to]) || User.current.today
+  end
+
+  def date_to=(value)
+    options[:date_to] = value.presence && value.to_s
+  end
+
+  # Issues the chart is computed over. Charts ignore the board's status columns
+  # — a burndown counts everything the filters select, closed or not.
+  # The chart selection travels with the same request the board settings do,
+  # so the shared query controller can save either kind.
+  def apply_board_params(params)
+    super
+    self.chart = params[:chart] if params[:chart].present?
+    self.chart_unit = params[:chart_unit] if params[:chart_unit].present?
+    self.interval = params[:interval] if params[:interval].present?
+    self.date_from = params[:date_from] if params[:date_from].present?
+    self.date_to = params[:date_to] if params[:date_to].present?
+    self
+  end
+
+  def chart_scope
+    base_scope.eager_load(:status, :expert_agile_data)
+  end
+
+  # Whether this chart would exceed the item cap. Every chart is bounded: the
+  # replaying ones walk each issue per bucket, and the counting ones (velocity,
+  # cycle time) still load every issue in full, which on the global charts
+  # page is every issue the viewer can see.
+  def too_many_items?
+    chart_scope.count > RedmineExpertAgile.chart_items_limit
+  end
+
+  def build_chart
+    klass = RedmineExpertAgile::Charts::Registry.chart_class(chart)
+    return nil if klass.nil?
+
+    klass.new(chart_scope.to_a,
+              :date_from => date_from, :date_to => date_to,
+              :unit => chart_unit, :interval => interval)
+  end
+
+  # Past chart data cannot change, so it is worth caching. The fingerprint
+  # covers everything that could alter the result — not only the issues, but
+  # what the chart is rendered with: titles and series names are translated,
+  # cumulative flow draws one band per status by name and position, measured
+  # lines stop at the viewer's today, and two settings reshape the lines.
+  # Without those, a German viewer got the English chart an English viewer had
+  # just cached, and a renamed status kept its old name until expiry.
+  #
+  # The entry is shared between viewers, so it must also say *which* issues it
+  # was built from: the scope goes through Issue.visible, and two users can see
+  # the same number of issues with the same latest update while seeing different
+  # ones. And journals are bucketed into days in the viewer's time zone, so the
+  # same issues give a different series in Berlin than in New York.
+  def cache_key
+    scope = chart_scope
+    [
+      'expert_agile_chart', chart, chart_unit, interval,
+      date_from.to_s, date_to.to_s,
+      visible_issues_fingerprint(scope),
+      scope.maximum(:updated_on).to_i,
+      project_id, id,
+      I18n.locale, User.current.today.to_s, viewer_time_zone,
+      RedmineExpertAgile.exclude_weekends? ? 1 : 0,
+      RedmineExpertAgile.chart_future_data? ? 1 : 0,
+      statuses_fingerprint
+    ].join('/')
+  end
+
+  private
+
+  # A digest of the exact issue ids the viewer's scope yields. Plucking ids is
+  # one indexed query and far cheaper than the chart a miss would build, which
+  # loads every one of those issues in full.
+  def visible_issues_fingerprint(scope)
+    ids = scope.reorder(nil).distinct.pluck(:id).sort
+    "#{ids.size}:#{Digest::SHA256.hexdigest(ids.join(','))[0, 16]}"
+  end
+
+  # The zone JournalProjection buckets days in: the user's own, or the
+  # instance default when they have none (User#time_to_date's fallback).
+  def viewer_time_zone
+    zone = User.current.respond_to?(:time_zone) && User.current.time_zone
+    (zone || Time.zone).name
+  end
+
+  # IssueStatus has no timestamps, so a rename or reorder is only visible in
+  # the rows themselves. One small query; the instance has a handful of rows.
+  def statuses_fingerprint
+    Digest::SHA256.hexdigest(IssueStatus.sorted.pluck(:id, :name, :is_closed).to_json)[0, 16]
+  end
+
+  def parse_date(value)
+    return nil if value.blank?
+
+    Date.parse(value.to_s)
+  rescue ArgumentError, TypeError
+    nil
+  end
+
+  def default_date_from
+    date_to - 29
+  end
+end

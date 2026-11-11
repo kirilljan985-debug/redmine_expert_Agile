@@ -1,0 +1,978 @@
+# Changelog – redmine_expert_agile
+
+> 🇩🇪 Deutsche Version · [English version](CHANGELOG.md)
+
+Alle nennenswerten Aenderungen an diesem Plugin sind hier dokumentiert. Das
+Format folgt [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), das
+Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
+
+Massgeblich ist die englische [CHANGELOG.md](CHANGELOG.md) — daraus erzeugt der
+Release-Workflow die Release-Notes. Diese Datei ist die deutsche Spiegelung.
+
+## [0.10.2] - 2026-11-04
+
+### Behoben
+
+- **Die Ticketliste laesst sich auf MySQL nach Sprint gruppieren.** Die Gruppenzaehlung las den
+  Sprint ueber eine Unterabfrage, die MySQL im Standardmodus `ONLY_FULL_GROUP_BY` ablehnt
+  (MariaDB und PostgreSQL akzeptieren sie); eine nach *Sprint* gruppierte Liste brach deshalb mit
+  einem Fehler ab. Die Zaehlung verbindet jetzt die Agile-Daten des Tickets per Join. Auf MariaDB
+  und PostgreSQL aendert sich nichts.
+
+## [0.10.1] - 2026-11-04
+
+### Hinzugefuegt
+
+- **Das README nennt die mitgelieferten Fremdkomponenten.** Ein neuer Abschnitt *Komponenten von
+  Drittanbietern* fuehrt Chart.js, die darin enthaltene Bibliothek @kurkle/color und Coloris mit
+  Version, Copyright-Zeile und Pfad auf und enthaelt den Text der MIT-Lizenz.
+
+### Geaendert
+
+- **Formulierungen.** README und Plugin-Beschreibung nennen das Plugin eine unabhaengige
+  Implementierung, und die Code-Kommentare begruenden das Design ohne Vergleich mit anderen
+  Plugins.
+
+## [0.10.0] - 2026-11-02
+
+### Hinzugefuegt
+
+- **Spanisch, Franzoesisch, Italienisch und Portugiesisch.** Die Oberflaeche gibt es in sieben
+  Sprachen: `es`, `fr`, `it`, `pt` (Portugal) und `pt-BR` (Brasilien) neben Englisch und Deutsch.
+  Redmine zeigt jedem Benutzer die Sprache seines Kontos (oder die Standardsprache, wenn sie fuer
+  angemeldete Benutzer erzwungen ist) und faellt fuer jede andere auf Englisch zurueck.
+- **Die Sprachdateien werden getestet.** `test/unit/locale_files_test.rb` schlaegt fehl, wenn einer
+  Sprache ein Schluessel aus `en.yml` fehlt, sie einen hat, den `en.yml` nicht hat, die Reihenfolge
+  abweicht oder ein `%{…}`-Platzhalter verloren geht.
+
+## [0.9.1] - 2026-10-14
+
+### Behoben
+
+- **Das globale Board war nicht erreichbar.** `/expert_agile/board`, das Board ueber alle
+  Projekte, die ein Benutzer sehen darf, antwortete fuer jeden mit 404.
+  `find_project_by_project_id` lief ohne Bedingung auf der Board-Aktion, und ohne Projekt in der
+  URL loest das `Project.find(nil)` auf und rendert 404. Damit war die Route, die eine Zeile
+  weiter `authorize_global` absichert, die die README beschreibt und auf die der
+  Query-Controller nach dem Speichern eines globalen Boards weiterleitet, nie zu oeffnen. Der
+  Filter laeuft jetzt nur noch dort, wo die URL ein Projekt nennt.
+
+### Hinzugefuegt
+
+- **Ein Menuepunkt fuer das globale Board.** Er steht im Anwendungsmenue neben Projekte,
+  Aktivitaet und Tickets, fuer jeden mit dem Recht *Agile-Board ansehen* in mindestens einem
+  Projekt. Bisher verlinkte nichts in der Oberflaeche auf das globale Board: man kam nur ueber
+  die getippte URL hin, weshalb die 404 oben unbemerkt blieb.
+
+## [0.9.0] - 2026-10-13
+
+### Hinzugefuegt
+
+- **Sprint als Filter und Spalte in der Ticketliste.** Die Ticketliste von Redmine bekommt einen
+  Filter *Sprint* — ein oder mehrere Sprints, *Aktiver Sprint (automatisch)*, bei jedem Aufruf neu
+  aufgeloest, irgendein Sprint oder keiner (das Backlog) — und eine Spalte *Sprint*, die nach dem
+  Sprintbeginn sortiert, die Liste nach Sprint gruppiert und im CSV-Export landet. Damit gehen
+  gespeicherte Listen wie "alles im aktuellen Sprint", Exporte eines Sprints und Sammelbearbeitung
+  seiner Tickets. Angeboten nur in Projekten mit einem der Plugin-Module und in projektuebergreifenden
+  Listen.
+- **Sprint in einem Schritt abschliessen**, wie in Jira. *Sprint abschliessen* — in der Sprint-Liste
+  des Projekts und im Kopf der Sprint-Lane im Backlog-Planer — zeigt, was erledigt und was noch offen
+  ist, und verschiebt die offenen Tickets in den naechsten Sprint, zurueck ins Backlog oder in einen
+  direkt angelegten neuen Sprint (Name hochgezaehlt, Daten anschliessend). Danach wird der Sprint
+  geschlossen und auf Wunsch das Ziel zum aktiven Sprint, sodass ein Board, das dem aktiven Sprint
+  folgt, es sofort zeigt. Jedes Ticket wird wie im Planer verschoben — mit Journaleintrag, unter den
+  Rechten *Backlog verwalten* und *Tickets bearbeiten* und der eigenen Validierung des Tickets; laesst sich ein einziges Ticket
+  nicht verschieben, wird nichts geschrieben und die Seite nennt jede Ablehnung. Auch als
+  `POST …/expert_agile_sprints/:id/complete.json`.
+
+### Behoben
+
+- **Ein wieder geoeffnetes Ticket liess offene Arbeit in einem geschlossenen Sprint.** Ein
+  abgeschlossener Sprint behaelt die in ihm erledigten Tickets; wurde eines davon spaeter wieder
+  geoeffnet, blieb es in diesem Sprint. Jetzt verlaesst es beim Wiedereroeffnen den geschlossenen
+  Sprint und geht zurueck ins Backlog, vermerkt in seiner Historie.
+
+## [0.8.0] - 2026-10-13
+
+### Hinzugefuegt
+
+- **Epics wie in Jira.** Unter *Administration → expert Agile → Epics* werden die Tracker
+  gewaehlt, deren Tickets Epics sind; ein Ticket gehoert zum naechsten Epic ueber ihm im
+  Unteraufgaben-Baum von Redmine. Eine Story ist also Unteraufgabe ihres Epics, und die
+  Unteraufgaben der Story gehoeren ueber sie zum selben Epic. Keine neue Tabelle und kein
+  benutzerdefiniertes Feld: Redmines Filter "Uebergeordnetes Ticket", die REST-API, das
+  Gantt-Diagramm und die Summierung der Story Points sehen dieselben Daten. Mit dem neuen
+  Kartenfeld **Epic** traegt jede Karte auf dem Board und im Backlog ihr Epic als farbiges Badge
+  mit Link, eine Farbe je Epic; auch der Karten-Tooltip nennt das Epic. Angezeigt werden nur
+  Epics, die der Betrachter sehen darf.
+- **Epics stehen standardmaessig nicht auf dem Board**, wie in Jira — ein Epic ist ein Behaelter
+  fuer Arbeit, keine Karte, die durch die Spalten wandert. Wer *Epics auf dem Board ausblenden* in
+  den Board-Optionen abschaltet, holt sie zurueck; Spaltenzaehler und Summen folgen dem, was das Board zeigt.
+- **Swimlanes nach Epic.** Solange Epics eingeschaltet sind, steht *Epic* als Swimlane-Feld zur
+  Wahl: eine Lane je Epic, betitelt und verlinkt wie das Epic-Badge und in derselben Farbe, dazu
+  eine Lane fuer Tickets ohne Epic. Eine Story in die Lane eines anderen Epics zu ziehen macht sie
+  zur Unteraufgabe dieses Epics, in die Lane ohne Epic nimmt sie heraus — nach den Regeln des
+  Ticketformulars (Recht, Unteraufgaben zu verwalten, eigene Validierung des Tickets) und mit
+  Eintrag in der Ticket-Historie. Eine Unteraufgabe einer Story gehoert ueber die Story zum Epic
+  und wird mit Begruendung abgelehnt statt herausgerissen; ein Epic wird nicht in ein anderes
+  Epic gezogen.
+- **Planen in Epics.** Der Backlog-Planer bietet neben *Sprints* und *Versionen* nun *Epics*: eine
+  Lane je offenem Epic, und die Backlog-Lane enthaelt die Stories ohne Epic. Eine Story in die Lane
+  eines Epics zu ziehen macht sie zur Unteraufgabe dieses Epics, zurueckziehen nimmt sie heraus —
+  nach denselben Regeln wie auf dem Board. Die Unteraufgaben einer Story folgen ihrer Story und
+  sind keine eigenen Karten.
+- **Fortschritt je Epic.** Jede Epic-Lane — auf dem Board und im Planer — und die Ticketseite des
+  Epics zeigen, wie weit das Epic ist: ein Balken mit dem erledigten Anteil, nach Story Points, wo
+  die Arbeit geschaetzt ist, sonst nach Anzahl der Tickets; die Zahlen dahinter stehen im Titel.
+  Eine Verschiebung aktualisiert die Balken beider beteiligten Epics.
+- **Der Baum auf der Karte.** Mit dem Kartenfeld *Epic* nennt die Unteraufgabe einer Story unter
+  dem Epic-Badge ihre Story (Epic, dann ↳ Story), und der Karten-Tooltip zeigt den ganzen Pfad. Ein
+  neues Kartenfeld **Unteraufgaben** zeigt die Unteraufgaben einer Story als
+  "Erledigte Unteraufgaben: 2/5" mit schmalem Balken und klappt zur Liste mit dem Status jeder
+  Unteraufgabe auf — einfaches `<details>`, kein Skript.
+- **Epic-Uebersicht.** Ein neuer Reiter *Epics* neben dem Board listet jedes offene Epic des
+  Projekts als aufklappbaren Block: sein Fortschritt, darunter die Stories mit eingerueckten
+  Unteraufgaben, jeweils mit Status, Bearbeiter, Story Points und eigenem Unteraufgaben-Fortschritt.
+  Geschlossene Epics sind einen Klick entfernt. Gelistet werden nur Tickets, die der Betrachter
+  sehen darf; den Reiter gibt es, solange Epics eingeschaltet sind.
+
+### Behoben
+
+- **Der Planer aktualisiert die Lane, die eine Karte verlaesst.** Wurde eine Karte von einem Sprint,
+  einer Version oder einem Epic in ein anderes gezogen, behielt die Ausgangs-Lane Anzahl und Story
+  Points bis zum Neuladen; die Verschiebung antwortet nun auch fuer diese Lane.
+
+## [0.7.1] - 2026-10-05
+
+### Hinzugefuegt
+
+- **Die Spaltenkoepfe des Boards bleiben sichtbar.** Scrollt man ein Board herunter, das hoeher ist
+  als das Fenster, bleiben die Statuskoepfe am oberen Fensterrand stehen, bis die letzte Zeile des
+  Boards vorbei ist, sodass eine lange Spalte ihren Namen nie verliert. Seitliches Scrollen des
+  Boards machen sie mit.
+
+## [0.7.0] - 2026-10-02
+
+### Hinzugefuegt
+
+- **Eine Karte in eine andere Swimlane zu ziehen setzt das Feld, nach dem gruppiert ist** (#37),
+  fuer Bearbeiter, Prioritaet, Kategorie und Zielversion: eine Karte uebergeben, hochstufen,
+  einordnen, einplanen. Der Zug ist die Aenderung des Ticketformulars mit dessen Regeln (das Recht,
+  das Ticket zu bearbeiten, vom Workflow schreibgeschuetzte Felder, die Validierung des Tickets),
+  landet in der Ticket-Historie und wird zusammen mit einem Spaltenwechsel gespeichert oder
+  zusammen mit ihm abgelehnt. Ein Zug in die Swimlane ohne Bearbeiter wird nicht durch
+  "Beim Verschieben mir zuweisen" zurueckgenommen. In Swimlanes nach Projekt, Tracker, Status oder
+  Autor kann nicht abgelegt werden.
+
+### Behoben
+
+- **Eine in eine andere Swimlane gezogene Karte wurde dort gezeichnet, ihre Swimlane aber nie
+  gespeichert** (#37). Der Statuswechsel des Zugs wurde gespeichert, die Swimlane ignoriert, und
+  die Karte zeigte bis zum naechsten Neuladen eine Zugehoerigkeit, die die Datenbank nicht kannte.
+  Eine Karte bleibt jetzt in ihrer Swimlane: andere Swimlanes sind beim Ziehen als gesperrt
+  markiert, und die Karte springt von dort ohne Anfrage und ohne Meldung zurueck. Erreicht ein
+  solcher Zug doch den Server, lehnt dieser ihn ab, samt Statuswechsel. Swimlanes der vier Felder
+  oben nehmen die Karte an und schreiben das Feld.
+- **Die Summen der Swimlanes veralteten nach einem Zug.** Die Swimlane-Baender behielten ihre
+  Ticket- und Story-Point-Zahlen bis zum naechsten Neuladen. Ein Zug liefert jetzt die Summen
+  aller Swimlanes, und eine Karte, deren Swimlane sich als Nebenwirkung des Zugs geaendert hat
+  (Uebernehmen auf einem Board nach Bearbeiter), wird in ihre neue Swimlane gesetzt.
+
+## [0.6.1] - 2026-10-01
+
+### Behoben
+
+- **Anlegen eines Tickets mit Story Points oder Sprint schlug fehl.** Das Formular für neue
+  Tickets schickt die Agile-Felder mit, sobald Story Points oder die Sprint-Auswahl sichtbar sind
+  — auch leer —, und das Speichern scheiterte dann mit „Ticket muss ausgefüllt werden“; ebenso
+  `POST /issues.json` mit `expert_agile_data_attributes`. Der Agile-Datensatz wird jetzt gegen sein
+  Ticket geprüft statt gegen die noch nicht vergebene `issue_id`.
+  ([#48](https://github.com/expertZentrale/redmine_expert_agile/issues/48))
+
+## [0.6.0] - 2026-09-28
+
+### Hinzugefuegt
+
+- **Das Board zeigt vor dem Ablegen, wohin eine Karte darf.** Beim Aufnehmen einer Karte wird
+  jede Spalte fuer diese Karte als erlaubt (gruen) oder gesperrt (schraffiert) markiert — aus
+  derselben Workflow-Pruefung, mit der der Server Zuege durchsetzt: Tracker, Status, Rollen des
+  Benutzers, Uebergaenge nur fuer Autor oder Bearbeiter, offene Unteraufgaben und blockierende
+  Tickets. Eine gesperrte Spalte nimmt die Karte nicht an.
+- **Workflow-Demodaten zum Testen des Boards von Hand.** `scripts/seed_board_workflow_demo.rb` und
+  das zugehoerige Teardown bauen Projekte mit restriktiven, rollenabhaengigen Workflows und je
+  einem gespeicherten Board pro Swimlane-Feld auf dem wegwerfbaren Screenshot-Stack. Nur fuer die
+  Entwicklung; nicht Teil der Plugin-Laufzeit.
+
+### Behoben
+
+- **Ein abgebrochenes Ziehen liess die Karte in der falschen Spalte stehen.** Escape oder Loslassen
+  ausserhalb des Boards liess die Karte dort, wo der Zeiger zuletzt war — ohne Anfrage, bis zum
+  naechsten Neuladen. Die Karte kehrt jetzt an ihren Ausgangsplatz zurueck.
+- **Ein Statuswechsel, den ein anderes Plugin rueckgaengig machte, galt als gespeichert.** Ein Zug,
+  dessen Speichern gelang, dessen Status aber nicht in der Datenbank ankam, meldete Erfolg, und die
+  Karte sprang beim naechsten Neuladen zurueck. Der Zug wird jetzt mit einer Meldung abgelehnt, die
+  beide Status nennt.
+- **Swimlanes werden nur noch fuer Datensatz-Felder angeboten.** Ein Board nach % erledigt, einem
+  Datum (Beginn, Abgabe, Anlage, Aenderung, Abschluss) oder dem Privat-Merkmal zu gruppieren
+  lieferte HTTP 500. Keines davon ist eine Bahn, in der ein Team arbeitet, oder ein Wert, auf den
+  man eine Karte ziehen sollte — sie werden nicht mehr angeboten. Swimlanes sind Projekt, Tracker,
+  Status, Prioritaet, Autor, Bearbeiter, Kategorie und Zielversion. Ein Board, das mit Swimlanes
+  nach einem der entfernten Felder gespeichert wurde, oeffnet ungruppiert (#37).
+- **Ein Swimlane-Feld, das kein Ticket des Boards gesetzt hatte, hob die Gruppierung stillschweigend
+  auf.** Das Board zeigt jetzt die eine Swimlane "(ohne)", statt ungruppiert auszusehen.
+
+## [0.5.5] - 2026-09-27
+
+### Sicherheit
+- **Das Einplanen eines Tickets in einen Sprint verlangt überall die Planungsberechtigung.** Der
+  Backlog-Planer verlangt *Backlog verwalten*, Ticketformular, Sammelbearbeitung, Ticket-REST-API
+  und der Agile-Data-Endpunkt nahmen einen Sprint aber von jedem an, der das Ticket bearbeiten darf.
+  Sie verlangen jetzt dieselbe Berechtigung, und das Ticketformular bietet das Sprintfeld ohne sie
+  nicht mehr an. Die verschachtelten Agile-Attribute nehmen nur noch Story Points und Sprint an,
+  der Board-Rang lässt sich darüber nicht mehr schreiben.
+- **Ein offenes Ticket ließ sich in einen geschlossenen Sprint einplanen** und veränderte dessen
+  Burndown und Velocity nachträglich. Angenommen werden jetzt nur offene oder aktive Sprints.
+- **Das Löschen eines geteilten Sprints nahm Tickets anderer Projekte stillschweigend heraus.** Ein
+  Sprint, in den Tickets anderer Projekte eingeplant sind, lässt sich nicht mehr löschen, so wie
+  Redmine das Löschen einer noch verwendeten Version verweigert.
+- **Velocity und Durchlaufzeit luden alle sichtbaren Tickets.** Sie unterliegen jetzt wie die
+  übrigen Diagramme der Obergrenze für Diagramm-Einträge. (#41)
+
+## [0.5.4] - 2026-09-27
+
+### Sicherheit
+- **Der REST-Endpunkt für Agile-Daten ließ Nutzer, die nur Notizen hinzufügen dürfen, Story Points
+  und Sprints ändern.** `PUT /issues/:id/expert_agile_data` war von der Berechtigungsprüfung
+  ausgenommen und prüfte nur `Issue#editable?`, das schon mit dem Recht zum Hinzufügen von Notizen
+  zutrifft, und funktionierte auch bei abgeschaltetem Agile-Modul. Er verlangt jetzt *Agile-Board
+  bearbeiten* im Projekt des Tickets und dasselbe Recht an diesen Feldern wie das Ticketformular,
+  und er speichert über das Ticket, sodass ein Sprintwechsel in der Historie erscheint. `GET`
+  verlangt jetzt *Agile-Board ansehen*.
+- **Ein gespeichertes Diagramm eines anderen Nutzers ließ sich über seine ID öffnen.** Die
+  Diagrammseite suchte `query_id` ohne Sichtbarkeitsprüfung, private und auf Rollen beschränkte
+  Diagramme öffneten sich mit Name, Filtern und Zeitraum. Sie werden jetzt wie Boards und Backlogs
+  aufgelöst.
+- **Wer in einem Projekt öffentliche Ansichten verwalten durfte, konnte ein globales Board,
+  Diagramm oder Backlog veröffentlichen.** Eine globale Ansicht erscheint in jedem Projekt; das
+  Veröffentlichen ist jetzt wie im Kern Administratoren vorbehalten, und das Bearbeiten einer
+  Ansicht unterliegt derselben Regel wie das Anlegen.
+- **Eine einzige Diagrammanfrage konnte Millionen Tageswerte berechnen.** Der Zeitraum war
+  unbegrenzt; er ist jetzt auf drei Jahre beschränkt.
+- **Ein in ein anderes Projekt verschobenes Ticket behielt einen Sprint, den das neue Projekt nicht
+  verwenden darf.** Es blieb für den Backlog dieses Sprints unsichtbar und verhinderte, dass der
+  Sprint geschlossen werden konnte. Der Sprint wird jetzt beim Verschieben entfernt, wie es der
+  Kern für die Zielversion tut, und die Historie vermerkt das.
+- **Sprints archivierter Projekte wurden weiterhin angeboten und angenommen**, anders als geteilte
+  Versionen im Kern.
+- Kleinere Härtungen: Nachbarkarten eines Zugs und die Rang-Rückfallebene berücksichtigen nur
+  sichtbare Tickets, `%` und `_` in der Backlog-Suche gelten wörtlich, Story Points jenseits des
+  Spaltenbereichs sind ein Validierungsfehler statt eines Serverfehlers, und ein Sprintname im
+  Textteil einer Benachrichtigungsmail wird nicht mehr ein zweites Mal nachgeschlagen. (#39)
+
+## [0.5.3] - 2026-09-27
+
+### Sicherheit
+- **Jeder Sprint jedes Projekts ließ sich an ein Ticket schreiben, und sein Name dann aus der
+  Ticket-Historie lesen.** Ticketformular, Sammelbearbeitung und die Ticket-REST-API setzen den
+  Sprint über verschachtelte `expert_agile_data_attributes`, und die nahmen jede Sprint-ID an. Wer
+  in einem Projekt Tickets bearbeiten durfte, konnte einen Sprint eines fremden, unsichtbaren
+  Projekts an ein eigenes Ticket hängen und dessen Namen in der Historie lesen. Über die IDs lief
+  so jeder Sprint-Name der Instanz offen. Dieselbe Anfrage legte auch Tickets in Sprints anderer
+  Projekte ab, die sich danach nicht mehr schließen ließen. Angenommen wird jetzt nur ein Sprint
+  des Ticket-Projekts oder ein mit ihm geteilter, also die Menge, die Backlog-Planer und der
+  Agile-Data-Endpunkt schon verwendeten. Die Historie nennt einen Sprint nur noch, wenn der Leser
+  ihn ohnehin sehen darf, sonst steht dort die bloße ID. Das gilt auch für Journale, die vor
+  dieser Korrektur geschrieben wurden. (#32, danke an @idevchris)
+
+- **Der Backlog-Planer ließ Tickets umplanen, die der Nutzer nicht ändern durfte.** Die
+  Planungsberechtigung wurde nur am Projekt aus der URL geprüft, das verschobene Ticket konnte aber
+  jedes sichtbare sein. Planungsrechte in einem Projekt reichten, um Tickets jedes anderen Projekts
+  aus ihrem Sprint oder ihrer Zielversion zu nehmen. Der Zug schrieb das Feld zudem direkt und ließ
+  jeden zu, der Notizen hinzufügen darf, an Bearbeitungsrecht und schreibgeschützten
+  Workflow-Feldern vorbei. Ein Zug braucht jetzt die Planungsberechtigung im Projekt des Tickets und
+  dasselbe Recht, Sprint oder Zielversion zu ändern, das auch das Ticketformular verlangt,
+  schreibgeschützte Felder eingeschlossen. (#33, danke an @idevchris)
+
+- **Ein Kartenzug änderte den Status von Tickets, die der Nutzer nicht bearbeiten durfte.** Das
+  Board ließ jeden zu, der Notizen hinzufügen darf, und prüfte den Zielstatus nur gegen den
+  Workflow. Der Workflow berücksichtigt aber auch Rollen, die nur Tickets anlegen dürfen. Eine
+  Rolle mit `add_issues` und `add_issue_notes` ohne Bearbeitungsrecht konnte so jedes sichtbare
+  Ticket per Ziehen schließen, was das Ticketformular verweigert. Ein Statuswechsel auf dem Board
+  braucht jetzt zusätzlich dasselbe Recht wie im Ticketformular. Mit eingeschalteter Einstellung
+  „Beim Verschieben mir zuweisen“ beachtet die Zuweisung dieses Recht ebenso wie einen im Workflow
+  schreibgeschützten Bearbeiter und weist eine Karte nicht mehr zu, die nur innerhalb ihrer Spalte
+  umsortiert wurde. Das Umsortieren innerhalb einer Spalte bleibt sonst unverändert. (#34, danke an @idevchris)
+
+- **Jeder Sprint-Verwalter konnte einen Sprint mit allen Projekten der Instanz teilen.** Die
+  Freigabe wurde übernommen, wie sie ankam. Ein Projektmitglied, das „Mit allen Projekten“ wählte,
+  brachte Name und Zeitraum des Sprints ins Ticketformular, in die Sprint-Auswahl des Boards und in
+  den Backlog-Planer jedes Projekts, auch vor die externen Nutzer anderer Kunden, und jedes Projekt
+  konnte in den Sprint planen. Die Freigabe folgt jetzt den Regeln, die Redmine für Versionen
+  anwendet: mit allen Projekten nur für Administratoren, mit Projektbaum oder Hierarchie nur für
+  Nutzer, die im Root-Projekt Sprints verwalten. Das Formular bietet nur an, was der Nutzer wählen
+  darf, die REST-API lehnt den Rest ab. Ein von einem Administrator geteilter Sprint bleibt für die
+  Sprint-Verwalter des Projekts bearbeitbar. Bereits weiter geteilte Sprints bleiben unverändert;
+  ein Administrator sollte sie prüfen. (#35, danke an @idevchris)
+
+- **Story-Point-Summen zählten Tickets mit, die der Leser nicht sehen durfte.** Die Summe auf der
+  Seite eines übergeordneten Tickets addierte alle Unteraufgaben, auch private und solche in
+  Projekten ohne Zugriff, und die Differenz zu den eigenen Punkten zeigte, wie viel Arbeit dort
+  verborgen lag. Ebenso meldete die Sprint-REST-API `issue_count` und `story_points` über alle
+  Tickets eines geteilten Sprints, gleich aus welchem Projekt. Beide zählen jetzt nur Tickets, die
+  der Leser sehen darf, wie Redmine es bei der Summe des geschätzten Aufwands macht. (#36, danke an @idevchris)
+
+## [0.5.2] - 2026-09-24
+
+### Behoben
+- **Auf dem Board eines übergeordneten Projekts zeigte ein Zug einer Unterprojekt-Karte dessen
+  Zahlen.** Mit Swimlanes nach Projekt wurden die Spaltenköpfe nach einem Zug in der Spur eines
+  Unterprojekts zu den Zahlen dieser Spur, und ein Zug in einer anderen Spur setzte sie wieder auf
+  die Gesamtzahl. Der Server baute das Board für das Projekt der gezogenen Karte statt für das
+  Board, auf dem sie gezogen wurde, und weil das wie ein anderes Board aussah, ersetzte der Zug
+  auch das in der Sitzung gespeicherte Board durch ein Standard-Board. Das Board teilt dem Server
+  jetzt mit, auf welchem Board die Karte liegt, die Zahlen beziehen sich auf dieses Board, und ein
+  Zug schreibt das Sitzungs-Board nie. Angenommen wird nur ein Board, das der Nutzer öffnen darf:
+  ein Projekt, das die Karte enthält und die Board-Berechtigung gewährt, oder das globale Board mit
+  global gewährter Board-Berechtigung. (#30) Berechtigungen werden weiterhin am Projekt der Karte geprüft.
+
+## [0.5.1] - 2026-09-24
+
+### Behoben
+- **Die Spaltenzahlen nach einem Zug waren die von davor.** `board_scope` fragt
+  `board_columns` nach den Status-IDs, nach denen es filtert, und `update` baut den
+  Geschwister-Scope ueber `board_scope` auf, bevor das Ticket gespeichert wird. Damit war
+  `@board_columns` bereits mit den Werten von vor dem Zug gefuellt, als `move_payload` sie
+  gelesen hat. Jeder Zug ueber Spaltengrenzen meldete das Board im Stand des vorherigen
+  Zuges: Kartenzahl, Stunden- und Story-Point-Summen sowie `over_wip_limit`, eine Spalte
+  konnte also innerhalb ihrer WIP-Grenze erscheinen, obwohl sie bereits darueber lag. Die
+  Werte werden jetzt nach dem Speichern verworfen. (#28, danke an @idevchris)
+- **Zwischengespeicherte Diagramme ignorierten die Sprache und die Statusnamen.** Der
+  Cache-Schlüssel der Diagramme umfasste die Tickets und die Abfrage, aber nicht das, womit ein
+  Diagramm dargestellt wird. Innerhalb der Cache-Dauer (`chart_cache_minutes`, standardmäßig 60)
+  bekam ein deutscher Nutzer das englische Diagramm, das ein englischer gerade geladen hatte —
+  Titel, Achsen und Reihennamen —, und ein umbenannter oder umsortierter Status behielt im
+  Cumulative Flow sein altes Band, bis der Eintrag ablief. Der Schlüssel umfasst jetzt auch die
+  Sprache, das Heute des Nutzers (dort enden die gemessenen Linien), die Einstellungen *Wochenenden
+  aus der Ideallinie ausnehmen* und *Zukünftige Daten in Diagrammen anzeigen* sowie einen
+  Fingerabdruck der Ticketstatus. Weil der Eintrag zwischen Nutzern geteilt wird, deckt er außerdem
+  genau die für den Nutzer sichtbaren Tickets und seine Zeitzone ab: Zwei Nutzer mit gleich vielen,
+  aber unterschiedlich berechtigten Tickets bekommen nicht mehr das Diagramm des anderen, und
+  Journale landen für jede Zeitzone am richtigen Tag. (#27)
+
+## [0.5.0] - 2026-09-23
+
+### Geändert
+- **Kartenfarben können jede Farbe sein.** Die Farbseite nutzt einen
+  [Coloris](https://coloris.js.org/)-Farbwähler (mitgeliefert, MIT) statt eines Rasters aus 18
+  Farbfeldern: Farbfläche, Farbton-Regler und Hex-Feld, dazu dieselben 18 Palettentöne als
+  Farbfelder. Farben werden als `#rrggbb` gespeichert; Migration `005` wandelt jeden gespeicherten
+  Palettennamen in seinen Hex-Wert um, bestehende Boards sehen also gleich aus. Der Hintergrund
+  einer Karte wird jetzt aus ihrer Farbe berechnet und bleibt bei jeder Wahl hell, und Karten,
+  Spaltenköpfe, Swimlanes und Backlog-Spuren beziehen ihre Farbe aus je einer CSS-Regel statt
+  aus einer pro Palettenfarbe. Ein Wert, der keine Farbe ist, wird mit Namen abgelehnt und lässt
+  die bisherige Farbe stehen; der Rest des Formulars wird trotzdem gespeichert. Skripte, die eine
+  Farbe direkt setzen (`tracker.color = ...`), übergeben jetzt Hex (`#3d7ec4`); Palettennamen
+  werden abgelehnt.
+
+## [0.4.0] - 2026-09-23
+
+### Hinzugefügt
+- **Sprint-Boards.** Das Board lässt sich über die neue Auswahl *Sprint* in seinen Optionen
+  oder mit `sprint_id=<id>` in der URL auf einen Sprint eingrenzen; *Aktiver Sprint*
+  (`sprint_id=active`) folgt dem jeweils laufenden Sprint, sodass ein gespeichertes Sprint-Board
+  die nächste Iteration unverändert übersteht. Spalten, Zähler und Story-Point-Summen umfassen
+  dann nur die Tickets dieses Sprints. Die Option `sprint_id` wurde bisher schon angenommen und
+  gespeichert, grenzte das Board aber nie ein (#21).
+  Aufgelöst werden nur Sprints, in die das Projekt planen darf — geschlossene eingeschlossen,
+  damit ein beendeter Sprint nachträglich angesehen werden kann; jede andere ID, oder *Aktiver
+  Sprint* ohne laufenden Sprint, zeigt ein leeres Board, statt alle Tickets als Sprint auszugeben.
+
+### Behoben
+- **`release.yml` akzeptierte fehlerhafte Tags.** Die Semver-Prüfung erlaubte dem optionalen
+  Suffix, mit `.` zu beginnen, womit `v1.2.3.4` als gültig durchging, und ließ leere Bezeichner
+  wie `1.2.3-a..b` zu.
+
+## [0.3.2] - 2026-08-28
+
+### Behoben
+- **Eine Karte aus einem Unterprojekt liess sich auf dem Board des Elternprojekts nicht
+  verschieben und meldete nur "Der Zug konnte nicht gespeichert werden".** Ein Board ist nicht
+  ein Projekt: Das Board eines Elternprojekts traegt die Tickets seiner Unterprojekte, das
+  globale Board traegt alles, waehrend die Berechtigung zum Verschieben dort geprueft wird, wo
+  die Karte liegt. Das Board entschied ueber die Ziehbarkeit einmal, anhand des Projekts, in dem
+  es angezeigt wurde — also war jede Karte auf dem Board des Elternprojekts ziehbar, und die aus
+  Unterprojekten sprangen sofort zurueck. Ein Unterprojekt ohne aktiviertes Agile-Modul weist
+  sogar Administratoren ab, weil Redmine das Modul prueft, bevor es prueft, wer fragt — deshalb
+  ueberlebte die Ablehnung einen Blick auf die Rollen, an denen nichts falsch ist. Jede Karte
+  sagt jetzt selbst, ob sie verschoben werden darf, eine Karte die abgelehnt wuerde, wird also
+  gar nicht erst angeboten, und eine dennoch auftretende Ablehnung nennt das Projekt, in das zu
+  schauen ist. Der Backlog-Planer greift genauso in Unterprojekte und ist mit behoben.
+- **"Der Zug konnte nicht gespeichert werden" war die Antwort auf fuenf verschiedene Fragen.**
+  Dieser Satz ist die Ersatzmeldung des Boards fuer eine Antwort, die es nicht lesen kann, und
+  Redmine beantwortet alles, was es ablehnt, fuer jedes Format ausser HTML mit einem leeren
+  Rumpf. Eine fehlende Berechtigung *Agile-Board bearbeiten*, eine Sitzung, die abgelaufen war,
+  waehrend das Board offen stand, eine Seite mit nicht mehr passendem CSRF-Token, eine geloeschte
+  Karte und jeder unerwartete Serverfehler kamen damit alle als derselbe Satz beim Benutzer an —
+  und keiner davon als der Grund. Das liest sich jedes Mal wie ein Fehler im Board, und genau so
+  wird es gemeldet. Jeder dieser Faelle antwortet jetzt in der Form des Boards und nennt sich
+  selbst; alles Unvorhergesehene wird vollstaendig protokolliert und ebenso beantwortet, statt
+  Rails' HTML-Fehlerseite zu ueberlassen. Zwei verwandte Luecken sind mit geschlossen: Ein Zug,
+  dessen gespeicherte Antwort das Board anschliessend nicht anzeigen konnte, legt die Karte nicht
+  mehr zurueck, als waere nichts geschrieben worden, und ein Board, das geloescht wurde, waehrend
+  die es nennende Seite noch offen war, laesst den Zug nicht mehr scheitern — welches Board auf
+  dem Bildschirm steht, entscheidet nur ueber die Karten, an denen ein neuer Rang gemessen wird.
+  Der Backlog-Planer hatte all das ebenfalls und ist mit behoben.
+- **Ein gespeichertes Board liess sich beim Bearbeiten nur umbenennen.** Das Bearbeitungsformular
+  schrieb die Konfiguration des Boards als versteckte Felder aus dem gespeicherten Datensatz
+  heraus. Aendern liessen sich damit nur Name und Sichtbarkeit — Filter, Kartenfelder,
+  Swimlanes, Einfaerbung, Statusspalten und WIP-Grenzen gingen unveraendert hinein und wieder
+  heraus. Schlimmer noch: der Weg dorthin machte das unsichtbar, denn die Schaltflaeche
+  "Bearbeiten" war ein einfacher Link. Alles, was gerade im Optionsfeld angewandt worden war,
+  ging dabei verloren, und das Speichern schrieb die alte Konfiguration direkt wieder darueber.
+  Das Formular zeigt jetzt das Optionsfeld des Boards selbst, ein gespeichertes Board wird also
+  mit denselben Bedienelementen bearbeitet, mit denen es angelegt wurde, und "Bearbeiten"
+  nimmt das Optionsfeld mit — es oeffnet das Board so, wie es auf dem Bildschirm steht, und
+  nicht so, wie es zuletzt gespeichert wurde. Fuer einen gespeicherten Backlog gilt dasselbe.
+  "Speichern" und "Bearbeiten" sind jetzt Absende-Schaltflaechen mit `formaction` statt eines
+  Links, der das Formular per Inline-Handler umschreibt; damit kommt die Board-Seite mit einem
+  Inline-Skript weniger aus.
+
+## [0.3.1] - 2026-08-27
+
+### Geaendert
+- **Ein vom Workflow abgelehnter Zug nennt jetzt, welchen Uebergang er abgelehnt hat und was
+  stattdessen moeglich ist.** Das Board sagte "Der Workflow erlaubt diesen Statuswechsel nicht" —
+  damit raet ein Benutzer, ob er die Karte in der falschen Spalte abgelegt hat, ihm ein Recht
+  fehlt oder eine Regel greift, die jemand bewusst gesetzt hat; und ein Administrator weiss nicht,
+  wo er suchen soll. Die Meldung nennt jetzt den Tracker und beide Status, darunter listet das
+  Board die Status auf, die von der aktuellen Position aus *offen* sind. Administratoren bekommen
+  zusaetzlich einen Link direkt in den Workflow dieses Trackers; alle anderen nicht, denn nur sie
+  koennen ihn aendern und nur fuer sie oeffnet die Seite. Beide Zusaetze werden im Browser als
+  Elemente gebaut, nicht als Markup — nichts, was der Server schickt, wird als HTML ausgewertet.
+
+## [0.3.0] - 2026-08-27
+
+### Hinzugefuegt
+- **Die aktuelle Farbe steht neben der Palette im Klartext**: als Farbfeld mit Namen und
+  Hex-Code, und sie folgt dem, was angeklickt wird, statt dem zuletzt Gespeicherten. Welches von
+  neunzehn Farbfeldern die Markierung traegt, ist nichts, woran man eine Tabelle ablesen sollte.
+
+### Entfernt
+- **Karten lassen sich nicht mehr einzeln pro Ticket einfaerben.** Ein Board faerbt danach, was ein
+  Ticket *ist* — Tracker, Status, Prioritaet, Projekt, Bearbeiter oder das Verhaeltnis von
+  aufgewendeter zu geschaetzter Zeit —, und eine an einem einzelnen Ticket gesetzte Farbe ist eine
+  Notiz an einer Stelle, an der niemand nach einer sucht. Die Farbbasis *Ticket* ist aus den
+  Einstellungen verschwunden, der Reiter *Ticket* vom Kartenfarben-Bildschirm und das Farbfeld aus
+  dem Ticketformular. Eine Migration loescht die Zeilen, die diese Farben hielten und die nichts
+  mehr erreichen kann.
+
+  Der Reiter *Ticket* war zugleich der einzige Bildschirm des Plugins, der einer echten
+  Installation nicht standhielt: er listete jedes Ticket der Instanz auf, jedes mit der ganzen
+  Palette — auf der Installation, aus der die Meldung kam, waeren das rund 3,8 Millionen
+  Formularelemente auf einer Seite gewesen.
+
+### Behoben
+- **Die Farbauswahl zeigte keine Farben.** 0.2.3 ersetzte die Auswahlfelder durch Farbfelder, aber
+  keiner der beiden Bildschirme, die sie zeigen, laedt das Stylesheet des Plugins — eingebunden
+  wird es vom Board, vom Backlog und von den Diagrammen, und der Kartenfarben-Bildschirm wie das
+  Ticketformular sind nichts davon. Ohne das Stylesheet waren die Farbfelder leere Elemente ohne
+  Groesse, und die Radiobuttons dahinter wurden nie ausgeblendet; uebrig blieb eine Reihe
+  Radiobuttons, deren Farben nur noch im Tooltip existierten. Dieselbe Aenderung hatte die
+  Farbnamen aus dem sichtbaren Text genommen, aus lesbar wurde also unbenutzbar. Beide Bildschirme
+  laden das Stylesheet jetzt, und jedes Farbfeld traegt Farbe, Groesse und Rahmen inline bei sich —
+  es ist damit auch auf einer Seite sichtbar, die gar kein Stylesheet laedt.
+- **Unter 0.2.3 lief das Oeffnen eines Tickets auf einen Fehler, wo Boards nach Ticket faerbten.**
+  Das Farbfeld im Ticketformular wird von einem Plugin-Helper gezeichnet, und Redmine schaltet
+  Rails' automatische Helper-Einbindung ab: ein Helper erreicht nur den gleichnamigen Controller —
+  nicht Redmines Ticket-Controller, in dem ein Hook dieses Feld rendert. Erst behoben, dann mit dem
+  Rest der Ticketfarbe entfernt; geblieben ist davon, dass Ticketseiten bei jeder Einstellung
+  wieder funktionieren.
+
+## [0.2.3] - 2026-08-26
+
+### Geaendert
+- **Kartenfarben werden aus der Palette selbst gewaehlt statt aus einer Liste von Farbnamen.**
+  Beide Stellen, an denen man eine vergibt — der Administrationsbildschirm und das Farbfeld am
+  Ticket —, boten ein Auswahlfeld mit "Gruen", "Hellgruen", "Tuerkis" an; ausgerechnet das, was man
+  beim Waehlen sehen muss, naemlich die Farbe, war nicht zu sehen. Beide zeigen jetzt die Palette
+  als Farbfelder, die aktuelle markiert, dazu ein durchgestrichenes Feld zum Loeschen. Darunter
+  sind es weiterhin Radiobuttons: Tastaturbedienung wie bisher, und abgeschickt wird dasselbe.
+- **Die Palette waechst von 9 auf 18 Farben** und ist nach Farbton sortiert statt danach, wann
+  welche dazukam — verwandte Toene stehen so beieinander. Die bisherigen neun behalten Namen und
+  Werte, und alles bereits Gefaerbte behaelt seine Farbe. Eine Ausnahme: Faerbt ein Board nach
+  Bearbeiter, wird die Farbe aus der Palette abgeleitet — diese Karten wechseln also die Farbe.
+  Gespeichert ist dafuer nichts, die Zuordnung war nie inhaltlich, nur stabil.
+- **Das Plugin hat einen nach ihm benannten Eintrag im Administrationsmenue.** Seine Einstellungen
+  waren nur ueber Administration → Plugins → Konfiguration erreichbar, waehrend das Einzige, was
+  das Plugin ins Administrationsmenue stellte, der Bildschirm fuer die Kartenfarben war — zwischen
+  Redmines eigenen Bereichen als "Farben der Agile-Karten" gelistet, ohne Hinweis darauf, wozu er
+  gehoert oder wo der Rest des Plugins konfiguriert wird. Es gibt jetzt einen einzigen Eintrag
+  *expert Agile*, der zu den Einstellungen fuehrt — dieselbe Form, die das Helpdesk-Plugin
+  verwendet —, und die Kartenfarben erreicht man aus dem Farben-Abschnitt dieser Einstellungen.
+  Auf der Einstellungsseite selbst hat sich nichts verschoben, und der Farben-Bildschirm bleibt
+  unveraendert unter seiner bisherigen Adresse erreichbar.
+
+### Behoben
+- **Der Administrationseintrag des Plugins hatte unter Redmine 6 und neuer kein Symbol.** Er
+  forderte das Symbol "palette" aus dem eigenen Icon-Sprite des Plugins an, das dieses Plugin nie
+  mitgeliefert hat — und ein so angefordertes Symbol wird nicht in Redmines Kernsatz gesucht. Also
+  wurde nichts gezeichnet, und der Eintrag stand als einziger ohne Symbol zwischen den anderen.
+  Das Plugin liefert jetzt ein Sprite mit, und ein Test schlaegt fehl, sobald ein Menueeintrag ein
+  Symbol anfordert, das nicht darin enthalten ist.
+
+## [0.2.2] - 2026-08-26
+
+### Behoben
+- **Ein vom Workflow abgelehnter Zug wurde trotzdem als erledigt angezeigt.** Wurde eine Karte in
+  eine Spalte gezogen, die der Workflow nicht erlaubt, meldete das Board die Ablehnung — und liess
+  die Karte anschliessend in der Zielspalte liegen, als haette es den eben noch fuer unmoeglich
+  erklaerten Zug doch angenommen. Erst ein Neuladen holte die Karte zurueck, denn gespeichert
+  wurde nie etwas. Die Karte kehrt jetzt genau an die Position zurueck, von der sie aufgenommen
+  wurde, ebenso bei jeder anderen Ablehnung. Ob ein Zug ueberhaupt abgelehnt wird, haengt am
+  Workflow der Rolle: derselbe Zug kann fuer den einen Benutzer erlaubt und fuer den anderen
+  abgelehnt sein.
+- **Jeder fehlgeschlagene Zug meldete einen abgelehnten Statuswechsel.** Die Meldung fuer eine
+  Anfrage, die nie zurueckkam — abgerissene Verbindung, Serverfehler, unerwartete Antwort —, war
+  auf dem Board die Workflow-Meldung und im Backlog-Planer "Sprint bzw. Version steht nicht zur
+  Verfuegung"; beide hatten mit der tatsaechlichen Ursache nichts zu tun. Sie bleiben das, was der
+  Server bei einer echten Ablehnung schickt; eine Anfrage ohne Antwort sagt das jetzt auch.
+
+## [0.2.1] - 2026-08-19
+
+### Behoben
+- **In der Spalte "Neu" liessen sich Karten nicht umsortieren.** Eine zwischen zwei Karten
+  abgelegte Karte sprang an den Anfang der Spalte, statt dort zu bleiben, wo sie abgelegt wurde;
+  betroffen war nur diese eine Spalte. Raenge entstehen erst bei Bedarf — ein Ticket, das noch nie
+  gezogen wurde, hat gar keinen Rang und sortiert zusammen mit allen anderen ranglosen Karten nach
+  Ticket-Id hinter die mit Rang —, und "Neu" ist die Spalte, in der Tickets entstehen, besteht also
+  ausschliesslich aus ranglosen Karten. Eine Karte zu platzieren hiess, die Mitte zwischen den
+  Raengen ihrer beiden Nachbarn zu nehmen, und zwischen zwei Karten ohne Rang gibt es keine Mitte:
+  Der Zug wurde berechnet, als waere die Spalte leer, und die Karte landete ganz oben. Die Karten
+  oberhalb der Ablagestelle bekommen jetzt echte Raenge, in genau der Reihenfolge, in der sie schon
+  angezeigt werden, bevor die Mitte gebildet wird. Und nur sie: Eine Ablage nahe dem Anfang einer
+  Spalte mit Tausenden Karten fasst eine Handvoll Zeilen an, nicht Tausende — die Karten darunter
+  werden weder gelesen noch geschrieben und behalten ihren Platz. Spalten, in denen bereits
+  gezogene Karten liegen, waren nicht betroffen und bleiben, wie sie sind.
+- **Zwei an derselben Stelle abgelegte Karten konnten denselben Rang bekommen.** Alles, was
+  unterhalb der letzten Karte mit Rang abgelegt wurde, bekam einen Rang eine Stufe darunter; eine
+  zweite Ablage an derselben Stelle wiederholte damit den Rang der ersten, und die Reihenfolge
+  zwischen beiden entschied die Ticket-Id. Der Rang wird jetzt gegen die gesamte Spalte gemessen
+  statt gegen die Karte oberhalb der Ablagestelle.
+
+## [0.2.0] - 2026-08-14
+
+### Sicherheit
+- **Ein gespeichertes Board oder Backlog liess sich ueber seine ID von jedem oeffnen.** Beide
+  Abfragen loesten die ID direkt in der Tabelle auf, sodass ein privates Board eines anderen
+  Benutzers fuer jedes Projektmitglied aufging — Name und vollstaendiger Filtersatz, nicht jedoch
+  Ticketdaten, die weiterhin ueber `Issue.visible` geschuetzt sind. Beide loesen jetzt ueber
+  `visible` und `global_or_on_project` auf, also ueber den Bereich, den Seitenleiste und
+  Abfrage-Controller ohnehin schon verwendeten.
+- **Ein gespeichertes Board oder Backlog blieb offen, nachdem es nicht mehr sichtbar war.** Die
+  Sitzung haelt nur eine ID und ueberlebt die Abfrage, auf die sie zeigt; ein Eigentuemer, der ein
+  geteiltes Board auf privat stellt, oder eine Rolle, die das Recht verliert, blieb daher ohne
+  Wirkung, bis die Sitzung des Betrachters zufaellig endete. Die Wiederherstellung aus der Sitzung
+  loest jetzt ueber denselben Bereich auf und faellt auf ein frisches Board zurueck, wenn das
+  gespeicherte fehlt oder nicht mehr sichtbar ist.
+
+### Hinzugefuegt
+
+- **Der Backlog-Planer hat jetzt das Filter- und Optionsfeld des Boards.** Der Backlog-Tab war der
+  einzige Agile-Bildschirm ohne eines: er baute bei jedem Aufruf eine Wegwerf-Abfrage, zeigte
+  dadurch immer alle offenen Tickets des Projekts, und nichts von dem, was jemand einstellte,
+  ueberlebte einen Seitenwechsel. Er traegt nun dasselbe Feld wie das Board — Redmines eigenes
+  Filterwerkzeug, ein einklappbares Feld *Optionen* mit Kartenfeldern und Einfaerbung sowie
+  Anwenden / Zuruecksetzen / Speichern —, abgelegt in einem eigenen Sitzungsschluessel, sodass der
+  Rueckweg ueber das Projektmenue den Backlog so zeigt, wie er verlassen wurde. Spalten und
+  WIP-Grenzen fehlen bewusst: der Planer ignoriert, wo ein Ticket im Workflow steht.
+- **Gespeicherte Backlogs.** Ein Backlog laesst sich wie ein Board oder ein Diagramm speichern,
+  bearbeiten und loeschen; gespeicherte Backlogs erscheinen in der Agile-Seitenleiste, die der
+  Backlog-Tab jetzt ueberhaupt erst darstellt. Es sind `ExpertAgileBacklogQuery`-Zeilen in Redmines
+  Tabelle `queries`, sichtbar ueber das Recht `view_expert_agile_backlog` statt ueber das des
+  Boards, und `ExpertAgileBacklogQueriesController` ist der Abfrage-Controller des Boards auf diese
+  Klasse gerichtet — dieselbe Wiederverwendung, die die Diagramm-Variante bereits nutzt. Speichern
+  verlangt `add_expert_agile_queries` aus dem Modul `expert_agile`; ein Projekt, das nur das
+  Backlog-Modul aktiviert hat, kann daher filtern, aber nicht speichern.
+- **Backlog-Karten zeigen die im Feld gewaehlten Felder.** Sie hatten einen festen Satz aus Nummer,
+  Tracker, Thema, Status und Story Points; sie zeigen nun Bearbeiter samt Avatar, geschaetzten
+  Aufwand, Fortschritt, den Beschreibungsauszug und jede gewaehlte Spalte einschliesslich
+  benutzerdefinierter Felder — genau wie eine Board-Karte.
+- **Bildschirmfotos in beiden READMEs.** `README.md` und `README.de.md` haben jetzt einen Abschnitt
+  *Bildschirmfotos*: das Board mit Unterspalten und WIP-Grenzen, Swimlanes, den Backlog-Planer, die
+  Sprintliste, Story Points im Ticketformular, Burndown, Velocity, kumulativen Fluss, die
+  Kartenfarben-Verwaltung und die Plugin-Einstellungen — das Plugin laesst sich damit beurteilen,
+  ohne es vorher zu installieren. Die Bilder liegen in `docs/screenshots/{en,de}/` und sind wie der
+  Rest von `docs/` aus den Release-Archiven ausgeschlossen; das Installationspaket waechst dadurch
+  nicht.
+- **`scripts/seed_screenshot_demo.rb` und `scripts/teardown_screenshot_demo.rb`** bauen das
+  synthetische Demo-Projekt auf, aus dem die Bildschirmfotos stammen, und raeumen es wieder ab:
+  fuenf Sprints ueber den gesamten Lebenszyklus offen/aktiv/abgeschlossen, ~130 Tickets mit
+  rueckdatierten Statusjournalen, damit die verlaufsauswertenden Diagramme etwas auszuwerten haben,
+  Story Points, Board-Positionen, Zeiterfassung, Kartenfarben und drei gespeicherte Boards. Anders
+  als ihre Helpdesk-Gegenstuecke schreiben diese Skripte globalen Zustand — Story Points und
+  Sprints sind standardmaessig aus, sonst waere keines der beiden Funktionen sichtbar —, deshalb
+  sichert das Seed-Skript jeden veraenderten Wert und jede angelegte Zeile in der Einstellung
+  `expert_agile_screenshot_backup`, aus der das Teardown-Skript den Ausgangszustand
+  wiederherstellt. `RELABEL=de` benennt die Demo-Status zwischen dem englischen und dem deutschen
+  Durchlauf um, sodass beide Bildstrecken denselben Datenbestand zeigen. Beide Skripte verweigern
+  den Dienst ohne `DEMO_STACK=1`: sie laufen unter dem offiziellen Redmine-Image, das im
+  Production-Modus startet, sodass `Rails.env` eine Wegwerf-Datenbank nicht von einer echten
+  unterscheiden kann — die Zustimmung muss also ausdruecklich getippt werden.
+
+### Behoben
+
+- **Ein auf seinem eigenen Bildschirm gespeichertes Diagramm wurde als Board abgelegt.**
+  `expert_agile_queries/new` und `edit` hatten die Routen des Boards fest verdrahtet, sodass jede
+  Variante des Abfrage-Controllers ihr Formular an `ExpertAgileQueriesController` schickte,
+  gleichgueltig von welchem Bildschirm sie kam. Wohin das gemeinsame Formular schickt und wie es
+  ueberschrieben ist, entscheidet jetzt der Controller. Die Diagramm-Variante hatte keinen
+  Speichern-Link in der Oberflaeche, der Fehler traf also nur die API; das Backlog waere beim
+  ersten Klick hineingelaufen.
+- **„Zukunftsdaten in Diagrammen anzeigen" war wirkungslos.** Die Einstellung war deklariert, in
+  den Einstellungen dokumentiert und ueber `RedmineExpertAgile.chart_future_data?` lesbar, aber
+  kein Diagramm hat sie je ausgewertet: jede Reihe wurde bis zum Ende des gewaehlten Zeitraums
+  gezeichnet. Ein mitten im Sprint betrachteter Burndown lief dadurch ab heute waagerecht bis zum
+  Sprintende, und die Velocity zeigte leere Balken fuer Wochen, die noch gar nicht stattgefunden
+  haben. Gemessene Reihen (`:actual`, `:total`, `:created`, `:closed`, `:trend`) enden jetzt am
+  heutigen Tag, solange die Einstellung aus ist; die Ideallinie — eine Projektion, keine Messung —
+  laeuft weiterhin ueber den ganzen Zeitraum. Ein Intervall, das den heutigen Tag *enthaelt*,
+  bleibt erhalten, denn eine Woche ist an dem Tag, an dem man sie ansieht, zu Recht unvollstaendig.
+- **Die Baender des kumulativen Flusses waren nicht unterscheidbar.** Die Bandfarbe war ein
+  Farbton, der sich aus der Position des Status unter *allen* Status der Installation ergab. Auf
+  einer Installation mit fuenfzig Status zeichnete ein Diagramm mit sechs Baendern deshalb sechs
+  benachbarte Farbtoene — sechs Abstufungen desselben Rosas uebereinander. Die Palette verteilt
+  sich jetzt auf die Baender, die das Diagramm tatsaechlich zeichnet, sodass sie im Farbkreis so
+  weit auseinanderliegen wie moeglich.
+- **Unuebersetzte Spaltenueberschrift in der Kartenfarben-Verwaltung.** Die Tabelle rief
+  `l(:label_name)` auf — einen Schluessel, den weder das Plugin noch Redmine definiert —, sodass
+  die Verwaltungsseite „Translation missing: de.label_name" anzeigte. Sie verwendet jetzt Redmines
+  eigenes `field_name`.
+- **Der dokumentierte Testbefehl fuehrte das falsche Plugin aus.** Beide READMEs stellten `PLUGIN=`
+  vor `docker-compose … run`, wo es eine Shell-Variable bleibt und den Container nie erreicht — der
+  Dienst fiel auf seinen Standard zurueck und fuehrte die Helpdesk-Suite aus, die mit 417 gruenen
+  Tests meldete, waehrend die Agile-Suite nie lief. Der Befehl uebergibt jetzt `-e PLUGIN=…`.
+
+## [0.1.9] - 2026-08-11
+
+### Behoben
+
+- **Die Backlog-Bahnen ueberlappten einander.** Die feste Spaltenbreite von 300 Pixeln des Boards
+  stand als ungebundene `.ea-cell`-Regel, und der Backlog verwendet dieselbe Klasse — jede
+  Ablagezone wurde daher 314 Pixel breit in einer 280 Pixel breiten Bahn und ragte in die
+  Nachbarbahn hinein. Die Breite gehoert jetzt zur Tabelle des Boards, und die Elemente des
+  Plugins rechnen mit `border-box`.
+
+### Geaendert
+
+- **Der Backlog-Planer sieht nach Planungswerkzeug aus.** Die Umschaltung zwischen Sprints und
+  Versionen ist ein Segment-Schalter statt zweier blanker Links. Eine Sprint-Bahn zeigt Status,
+  Zeitraum und verbleibende Tage, sodass ohne Seitenwechsel erkennbar ist, welcher Sprint laeuft;
+  eine Versionsbahn zeigt ihr Datum. Die ungeplante Spalte ist gestrichelt und damit als Quelle
+  statt als Ziel gekennzeichnet, Bahnen tragen dieselbe Akzentfarbe wie auf dem Board, eine leere
+  Bahn erklaert sich selbst, und jede Bahn scrollt intern — ein grosses Backlog macht die Seite
+  also nicht mehr tausende Pixel lang.
+
+### Hinzugefuegt
+
+- Controller-Tests fuer den Backlog-Planer, der bisher keine hatte: Aufbau der Bahnen, genau eine
+  Ablagezone je Bahn, Container-IDs, Summen, die Sprint-Metadaten, Modul- und
+  Berechtigungspruefung sowie das Planen eines Tickets in einen Sprint und zurueck.
+
+## [0.1.8] - 2026-08-11
+
+### Geaendert
+
+- **Der Optionsbereich des Boards ist kompakt.** Aus drei gestapelten Fieldsets — darunter
+  Redmines Spaltenauswahl mit zwei Listen und Pfeilen, allein rund 400 Pixel hoch — ist ein
+  Bereich mit drei nebeneinander liegenden Gruppen geworden, die auf schmalen Bildschirmen
+  umbrechen: Kartenfelder, Darstellung sowie Spalten mit ihren WIP-Limits. Das Aufklappen kostet
+  279 statt fast einer Bildschirmhoehe, und alle Einstellungen sind gleichzeitig sichtbar.
+- **Kartenfelder sind ein Kaestchenraster.** Die Reihenfolge von Spalten zaehlt in einer Tabelle,
+  auf einer Karte kaum; der Platz, den die Pfeilauswahl fuer die Sortierung verbrauchte, zeigt
+  nun alle verfuegbaren Felder — auch benutzerdefinierte und die Beschreibung — in zwei dichten
+  Spalten. Die Auswahl wird weiterhin als `c[]` gesendet, Redmines Parameterverarbeitung bleibt
+  unveraendert.
+
+  Damit entfaellt die Moeglichkeit, Kartenfelder zu *sortieren*; sie folgen jetzt Redmines
+  eigener Spaltenreihenfolge.
+- Statusspalten und ihre WIP-Limits bilden ein dreispaltiges Raster, geschlossene Status kursiv,
+  damit die "Erledigt"-Spalte leicht zu finden ist. Lange Feldnamen tragen einen Tooltip, und
+  beide scrollbaren Listen blenden am unteren Rand aus, damit eine halb sichtbare Zeile als
+  "weiter unten geht es weiter" gelesen wird und nicht als Darstellungsfehler.
+
+## [0.1.7] - 2026-08-11
+
+### Behoben
+
+- **Jede Ticketseite lieferte einen 500er.** Der Hook im Ticketformular rief eine Pruefmethode
+  auf, die nie geschrieben worden war; das Oeffnen eines Tickets — auch per Klick auf eine Karte
+  des Boards — scheiterte mit `undefined method 'sprint_visible?'`. Die Pruefung existiert nun
+  und zeigt die Sprint-Auswahl nur, wenn Sprints aktiviert sind und das Projekt einen Sprint zur
+  Planung hat.
+- **Die View-Hooks des Plugins sind jetzt durch Tests abgedeckt, die Redmines eigene Seiten
+  rendern** — Ticketansicht, Bearbeiten, Neu, Massenbearbeitung und Ticketliste, jeweils mit
+  aktiviertem und deaktiviertem Modul sowie mit Sprints und Story Points. Die gesamte Testsuite
+  lief waehrend dieses Ausfalls durch, weil nie eine Kernseite mit geladenem Plugin gerendert
+  wurde; ein Hook, der eine Kernseite zerstoert, ist genau der Fehler, den ein Plugin am
+  dringendsten abfangen muss.
+
+## [0.1.6] - 2026-08-11
+
+### Hinzugefuegt
+
+- **Mehr Kartenfelder.** Angelegt und Aktualisiert waren bereits waehlbar; die Feldauswahl bietet
+  nun zusaetzlich **Zeit im Status** — volle Tage seit dem letzten Statuswechsel, beantwortet aus
+  einer einzigen gruppierten Journalabfrage fuer das gesamte Board statt einer Abfrage je Karte —
+  sowie einen **kurzen Auszug der Beschreibung**, dessen Laenge in den Plugin-Einstellungen
+  konfigurierbar ist. Die Beschreibung ist in Redmine eine Blockspalte, daher bietet der
+  Optionsbereich Blockspalten jetzt so an, wie es Redmines eigenes Abfrageformular tut.
+- Der Auszug ist reiner Text: HTML und Wiki-Markup werden entfernt statt gerendert, denn eine
+  Karte ist eine Zusammenfassung, und vollstaendiges Markup zoege Ueberschriften, Tabellen und
+  Bilder hinein. Aus E-Mails uebernommene Beschreibungen bestehen groesstenteils aus HTML, was
+  das praktisch relevant macht.
+
+### Behoben
+
+- **Eine spaeter hinzugefuegte Einstellung wurde in einer bestehenden Installation nie wirksam.**
+  Redmine liefert den gespeicherten Einstellungs-Hash vollstaendig zurueck, sobald das Formular
+  einmal gespeichert wurde; ein neu deklarierter Schluessel fehlt darin schlicht und wird als nil
+  gelesen — bei einer Zahl also als 0. Die deklarierten Standardwerte liegen jetzt unter den
+  gespeicherten Werten, ein gespeicherter Wert hat also weiterhin Vorrang (auch ein bewusst
+  leerer), waehrend neue Schluessel ihren Standard erhalten. Genau dadurch fiel der
+  Beschreibungsauszug auf seine Untergrenze von 20 Zeichen zurueck.
+
+## [0.1.5] - 2026-08-11
+
+### Behoben
+
+- **Swimlanes waren als Bahnen kaum zu erkennen.** Jede Bahn war eine Tabellenzeile mit einer
+  schmalen Beschriftungszelle am linken Rand; ueber die Spalten hinweg hielt die Zeile optisch
+  nichts zusammen. Eine Bahn ist jetzt ein Band ueber die volle Breite des Boards, mit dem Namen
+  der Bahn und ihren eigenen Summen aus Tickets und Story Points. Ist das Board breit genug zum
+  Scrollen, bleibt der Name der Bahn stehen, waehrend die Spalten darunter wandern.
+- **Alle Bahnen sahen gleich aus.** Bahnen haben nun eine Akzentfarbe. Eine Bahn, deren Wert
+  faerbbar ist — Tracker, Prioritaet oder Status — nutzt dessen Farbe, sodass das Band zu seinen
+  Karten passt und die Gruppierung nach Prioritaet die erwartete Skala von ruhig bis rot ergibt;
+  alles andere erhaelt eine stabile, aus der ID abgeleitete Palettenfarbe.
+
+## [0.1.4] - 2026-08-10
+
+### Hinzugefuegt
+
+- **Seitenleiste auf den Agile-Seiten.** Board und Diagrammseite haben nun eine Seitenleiste in
+  derselben Form wie Redmines Ticketliste: Schnellzugriff auf Board, Diagramme und Backlog, die
+  gespeicherten Boards (bzw. Diagramme), getrennt nach "Meine eigenen Abfragen" und geteilten,
+  sowie die Sprints des Projekts mit Link zum Anlegen. Der Wechsel zwischen den Ansichten ist ein
+  Klick.
+- **Gespeicherte Diagramme.** `ExpertAgileChartsQueriesController` — wie beim Board existierten
+  Routen und Berechtigungen seit dem ersten Commit ohne Controller dahinter. Diagrammauswahl,
+  Einheit, Intervall und Zeitraum werden mitgespeichert. Es ist der Query-Controller des Boards
+  auf eine andere Klasse gerichtet, keine zweite Kopie.
+
+### Behoben
+
+- **Das Speichern eines Diagramms wurde mit 403 abgelehnt.** Fuer den Diagramm-Query-Controller
+  war nur `:index` zugeordnet, und `find_optional_project` prueft das Paar aus Controller und
+  Aktion — jede andere Aktion war damit nicht absichtlich, sondern mangels Zuordnung verboten.
+- **Der Link "Speichern" zeigte auf die falsche Route.** Er verwies auf den Sammelpfad, also
+  `#index`, der lediglich zum Board zurueckleitet und die zu speichernde Konfiguration
+  stillschweigend verwirft. Er sendet nun an die Aktion `new`, wie Redmines eigenes Abfrageformular.
+- **Gespeicherte Diagramme erscheinen nicht mehr unter den Boards.** `ExpertAgileChartsQuery` ist
+  eine Unterklasse von `ExpertAgileQuery`; eine ungefilterte Abfrage listete beides. Die
+  Seitenleiste filtert jetzt auf den exakten Typ.
+
+## [0.1.3] - 2026-08-10
+
+### Behoben
+
+- **Board-Optionen gingen beim naechsten Seitenaufruf verloren.** Status, WIP-Limits, Swimlanes
+  und Farbgrundlage lagen nur in der URL; ein gesetztes WIP-Maximum war nach dem Neuladen — oder
+  schon beim Rueckweg ueber das Projektmenue — stillschweigend wieder weg. Das Board merkt sich
+  seine Konfiguration jetzt in der Session, genau wie Redmines eigene Ticketliste. Gespeichert
+  wird nur, was zum Wiederaufbau noetig ist, nicht der gesamte Optionsblock.
+- **Wer Boards speichern durfte, konnte fremde private Boards bearbeiten und loeschen.**
+  `editable_by?` prueft bisher nur die Berechtigung zum Speichern und ignorierte die
+  Eigentuemerschaft. Es folgt nun Redmines eigener Regel: eigene Boards gehoeren einem selbst,
+  oeffentliche Projekt-Boards erfordern die Verwaltungsberechtigung, globale Boards bleiben
+  Administratoren vorbehalten.
+- **Das Speichern eines Boards funktionierte nie**: Der Controller setzte `safe_attributes`, das
+  `Query` nicht kennt, wodurch das Anlegen eine Ausnahme warf. Name, Beschreibung und
+  Sichtbarkeit werden jetzt ausdruecklich zugewiesen; die Sichtbarkeit nur mit der
+  Verwaltungsberechtigung — ohne sie entsteht ein privates statt eines oeffentlichen Boards,
+  wie in Redmine.
+
+### Geaendert
+
+- Der Anzeigezustand des Boards liegt in der Session; was ein **Zug** aendern darf, ergibt sich
+  aber weiterhin ausschliesslich aus der Anfrage und dem Workflow des Tickets — nie aus der
+  Session.
+
+## [0.1.2] - 2026-08-10
+
+### Hinzugefuegt
+
+- **Optionsbereich am Board.** Das Board hat nun denselben ein- und ausklappbaren Filter- und
+  Optionsbereich wie jede andere Redmine-Liste; ein Board wird also dort konfiguriert, wo es
+  benutzt wird, und nicht nur in den globalen Einstellungen. Er bietet Redmines eigenes
+  Filter-Widget und erlaubt die Auswahl, welche Status zu Spalten werden (geschlossene
+  eingeschlossen, fuer die "Erledigt"-Spalte), WIP-Limits je Spalte, das Swimlane-Feld, die
+  Farbgrundlage, ob der Avatar des Bearbeiters erscheint und welche Felder auf den Karten stehen.
+- **Kartenfelder sind die Spalten der Abfrage selbst**, sodass alles, was Redmine in der
+  Ticketliste anzeigen kann — auch benutzerdefinierte Felder — auf eine Karte passt, formatiert
+  von Redmines eigener Spaltenausgabe.
+- **Gespeicherte Boards.** `ExpertAgileQueriesController` war von Anfang an in Routen und
+  Berechtigungen deklariert, aber nie geschrieben worden; das Speichern eines Boards lief daher
+  in einen 404. Boards lassen sich jetzt speichern, bearbeiten und loeschen, privat oder
+  oeffentlich gemaess den Agile-Berechtigungen.
+- **Avatare der Bearbeiter auf den Karten**, standardmaessig aktiv und je Board abschaltbar.
+
+### Behoben
+
+- **Das Setzen eines WIP-Limits liess das Board mit einem 500er abstuerzen.**
+  `ActionController::Parameters` ist kein Hash und kennt kein `each_with_object`; die
+  Modelltests uebergaben einfache Hashes und haben eine echte Anfrage nie nachgestellt. Die
+  Setter akzeptieren jetzt beides, und der Optionsbereich ist durch Controller-Tests mit echten
+  Request-Parametern abgedeckt.
+
+## [0.1.1] - 2026-08-10
+
+### Behoben
+
+- **Das Board zeigte alle offenen Status der Instanz statt der des Projekts.** In einer echten
+  Installation waren das 37 Spalten, von denen 3 genutzt wurden, jede auf etwa 27 Pixel
+  zusammengedrueckt, mit Kartentext im Umbruch von einem Zeichen pro Zeile. Die Spalten stammen
+  jetzt aus Redmines `Project#rolled_up_statuses` — den Status, die die Tracker des Projekts
+  tatsaechlich erreichen koennen.
+- **Karten wurden nie eingefaerbt, solange nicht ein Administrator jede Farbe von Hand vergeben
+  hatte.** Die Auswahl einer Farbgrundlage schien wirkungslos. Ein Objekt ohne ausdrueckliche
+  Farbe erhaelt nun eine stabile, aus seiner ID abgeleitete Palettenfarbe, so dass ein Board
+  sofort farbcodiert ist; eine ausdrueckliche Farbe hat weiterhin Vorrang. Die Einfaerbung *nach
+  Ticket* verzichtet bewusst auf diesen Rueckfall, denn dort sollen nur markierte Tickets
+  hervorstechen.
+- **Prioritaeten werden auf einer semantischen Skala eingefaerbt** (ruhig bis rot), abgeleitet aus
+  ihrer Position in der Aufzaehlung statt aus einer beliebigen Palettenfarbe — "dringend" sieht
+  damit auch dringend aus.
+- **Kartentext lief ueber und Spalten waren unterschiedlich breit.** Lange Betreffs, URLs und
+  Komposita brechen jetzt innerhalb der Karte um, Betreffs werden auf drei Zeilen begrenzt, und
+  alle Spalten haben dieselbe feste Breite; das Board scrollt seitlich, statt zu quetschen.
+- **Der Backlog-Planer hatte keinen Menueeintrag**, seine Karten waren nicht wie die des Boards
+  eingefaerbt, und ein Projekt ohne Sprints zeigte eine leere Seite ohne Erklaerung. Er erscheint
+  nun im Projektmenue, faerbt Karten einheitlich und bietet an, den ersten Sprint anzulegen.
+- **Spaltenkoepfe werden nach Status eingefaerbt**, wenn Statusfarben aktiviert sind.
+- **Zwei Diagrammbeschriftungen erschienen als "Translation missing"** — der Datumsbereich nutzte
+  Redmine-Kernschluessel, die es im deutschen Locale nicht gibt. Ausserdem hob die
+  Diagrammseite den Menueeintrag des Boards statt ihren eigenen hervor.
+
+### Geaendert
+
+- Karten- und Spaltengestaltung ueberarbeitet: groessere Spalten, klarere Kartenhierarchie,
+  Status- und Story-Point-Chips, Hover-Zustaende.
+
+## [0.1.0] - 2026-08-10
+
+### Hinzugefuegt
+
+- **Plugin-Geruest.** Registrierung, Plugin-Einstellungen mit deklariertem
+  Standardwert fuer jeden Schluessel, die Projektmodule `expert_agile` und
+  `expert_agile_backlog` samt Berechtigungen, das Schema (`expert_agile_data`,
+  `expert_agile_sprints`, `expert_agile_colors`), Routen, englische und deutsche
+  Locales sowie die Workflows fuer CI, Docker-Smoke-Test und Release.
+- **Story Points.** Ein Story-Point-Wert je Ticket, gespeichert in `expert_agile_data` statt als
+  benutzerdefiniertes Feld. Das Feld erscheint im Ticketformular, in der Attributtabelle und in
+  der Massenbearbeitung und wird wahlweise als konfigurierbare Werteliste (standardmaessig
+  modifizierte Fibonacci-Reihe) oder als freie Zahleneingabe angeboten. Es laesst sich auf
+  ausgewaehlte Tracker begrenzen. Uebergeordnete Tickets zeigen zusaetzlich die Summe ihres
+  Teilbaums; "nicht geschaetzt" bleibt dabei von "mit 0 geschaetzt" unterscheidbar.
+- **Story Points in der Ticketliste.** Eine sortierbare Spalte `story_points` und ein
+  Ganzzahlfilter in der Redmine-Ticketabfrage. Tickets ohne Agile-Datensatz gelten korrekt als
+  "ohne Story Points", werden von `ist nicht` und `keiner` also eingeschlossen statt
+  stillschweigend ausgelassen.
+
+- **Gespeicherte Agile-Boards.** `ExpertAgileQuery` erbt von Redmines eigener `IssueQuery`;
+  damit gelten saemtliche Ticketfilter, Spalten, Sichtbarkeitsregeln und Projektbezuege
+  unveraendert auch fuer ein Board, und ein gespeichertes Board ist eine einzige Zeile in der
+  Tabelle `queries` ohne zusaetzliches Schema. Die boardeigenen Einstellungen — sichtbare
+  Statusspalten, WIP-Limits, Farbgrundlage, Swimlane-Feld, Kartenfelder, Boardtyp, Sprint- und
+  Backlog-Schalter — liegen in den serialisierten Optionen, mit typisierten Zugriffsmethoden, so
+  dass die gespeicherte Struktur an genau einer Stelle definiert ist. WIP-Limits werden als
+  Ganzzahlpaare gespeichert statt als Zeichenkette `"2-7"`, die bei jeder Anzeige neu zerlegt
+  werden muesste.
+- **Boardspalten und Swimlanes.** Spalten sind schlichte `BoardColumn`-Wertobjekte mit
+  Ticketanzahl, geschaetzten Stunden, Story Points und WIP-Zustand; Status mit gemeinsamem
+  Praefix `Praefix:` liefern einen `path` fuer Unterspaltenkoepfe. Swimlanes nutzen Redmines
+  Gruppierung und werden aus den geladenen Karten abgeleitet, eine Bahn erscheint also nur, wenn
+  sie auch eine Karte enthaelt. Das gesamte Board entsteht aus einem einzigen Ticket-Ladevorgang;
+  ein Board, das seine Obergrenze erreicht, meldet dies, statt vollstaendig zu wirken.
+
+- **Das Board selbst.** Spalten aus Ticketstatus, Drag & Drop zwischen und innerhalb von
+  Spalten, Swimlanes, Unterspaltenkoepfe aus gemeinsamem Statuspraefix `Praefix:`, hinweisende
+  WIP-Limits, Karten-Tooltips und ein Eintrag im Projektmenue neben dem Gantt-Diagramm. Das
+  Kartenmarkup enthaelt weder Inline-Skripte noch Inline-Eventhandler, und das Board liest seine
+  Konfiguration aus einer JSON-Insel — es funktioniert damit unter einer
+  `script-src 'self'`-Content-Security-Policy.
+- **Serverseitig berechnete gebrochene Kartenraenge.** Ein Zug uebertraegt nur die gezogene Karte
+  und ihre beiden Nachbarn; der Server berechnet den Mittelwert und schreibt genau eine Zeile,
+  innerhalb derselben Transaktion wie die Ticketspeicherung. Gleichzeitige Zuege in derselben
+  Spalte ueberschreiben sich nicht mehr gegenseitig, und ein Zug innerhalb einer paginierten
+  Spalte sortiert die Karten unterhalb der Sichtgrenze nicht mehr um. Wenn wiederholte Zuege in
+  dieselbe Luecke die verfuegbare Genauigkeit erschoepfen, wird die Spalte automatisch neu
+  verteilt.
+- **Explizite Workflow-Pruefung auf dem Board.** Ein Zug auf einen vom Workflow verbotenen Status
+  wird mit einer konkreten Fehlermeldung abgelehnt und aendert nichts — statt aus einer
+  Attributzuweisung abgeleitet zu werden, die stillschweigend nicht gegriffen hat.
+
+- **Kartenfarben.** Karten lassen sich nach Tracker, Prioritaet, Status, Projekt, Bearbeiter,
+  aufgewendeter Zeit oder je Ticket einfaerben, aus einer geschlossenen Palette von neun Farben,
+  die so gewaehlt sind, dass der Kartentext lesbar bleibt. Farben fuer Tracker, Prioritaeten und
+  Status werden ueber eine neue Administrationsseite gepflegt; die Farbe je Ticket erscheint im
+  Ticketformular, sobald ein Board nach Ticket einfaerbt. Die Farbunterstuetzung ist ein Concern,
+  das nur in die fuenf faerbbaren Modelle eingebunden wird und nicht in `ActiveRecord::Base`, und
+  die Administrationsseite loest ihre Zielklasse ueber eine Whitelist auf, statt einen
+  Request-Parameter zu constantizen.
+
+- **Sprints.** Ein eigenstaendiger Sprint mit Name, Beschreibung, Start- und Enddatum,
+  Lebenszyklus offen/aktiv/geschlossen und Freigabe ueber den Projektbaum wie bei Versionen.
+  Das Aktivieren eines Sprints setzt den bisher aktiven Sprint des Projekts auf offen, ein
+  Sprint laesst sich nicht schliessen, solange er offene Tickets enthaelt, und ueberlappende
+  Sprints werden abgelehnt, sofern nicht ausdruecklich erlaubt. Sprints werden ueber einen
+  Reiter in den Projekteinstellungen und eine eigene Verwaltungsseite gepflegt, sind im
+  Ticketformular zuweisbar und ueber die REST-API verfuegbar. Das Loeschen eines Sprints hebt
+  die Zuordnung seiner Tickets auf, statt sie zu loeschen. Sprintwechsel werden in das Journal
+  des Tickets geschrieben und erscheinen damit in der Ticket-Historie.
+
+- **Backlog-Planer.** Eine eigene Planungsansicht hinter dem Modul `expert Agile Backlog`, die
+  ein ungeplantes Backlog neben je einer Bahn pro Sprint oder Version zeigt. Tickets werden mit
+  derselben serverseitigen Rangberechnung wie auf dem Board in eine Bahn gezogen, die Summen der
+  Bahnen aktualisieren sich direkt, und das Backlog laesst sich nach Betreff oder Ticketnummer
+  durchsuchen. Die Planung in Sprints und in Versionen ist eine parameterisierte Abfrage statt
+  zweier nahezu identischer, und Drag & Drop verwendet dieselbe Implementierung wie das Board.
+  Eine Container-ID, in die das Projekt nicht planen darf, wird abgelehnt — ein manipulierter
+  Aufruf kann ein Ticket also nicht in den Sprint eines fremden Projekts verschieben.
+
+- **Diagramme.** Burndown, Burnup, kumulierter Fluss, Velocity und Durchlaufzeit, wahlweise in
+  Tickets, Stunden oder Story Points, ueber Tages-, Wochen- oder Monatsintervalle. Der historische
+  Zustand wird aus einer einzigen Journalabfrage rekonstruiert, in einem Durchlauf zu einer
+  Zeitleiste je Ticket verdichtet und per binaerer Suche abgefragt — der Aufwand haengt damit an
+  der Zahl der Journaleintraege statt an Datum x Tickets x Journale. Berechnete Reihen werden
+  anhand eines Fingerabdrucks aller ergebnisrelevanten Groessen zwischengespeichert. Die
+  Mengenbegrenzung gilt nur fuer Diagramme, die tatsaechlich Historie auswerten; die zaehlenden
+  Diagramme sind unbegrenzt, weil sie guenstig sind. Chart.js liegt dem Plugin bei, statt aus dem
+  Asset-Verzeichnis eines anderen Plugins zu stammen, und Datumswerte werden in die Zeitzone des
+  Betrachters umgerechnet, damit ein Diagramm oestlich von UTC nicht um einen Tag verschoben ist.
+
+- **REST-API.** Die Agile-Daten je Ticket sind les- *und* schreibbar — Story Points und
+  Sprint-Zuordnung lassen sich direkt setzen, nicht nur ueber verschachtelte Attribute am
+  Ticket-Endpunkt — dazu vollstaendiges Sprint-CRUD. Eine Sprint-ID wird gegen die Sprints
+  aufgeloest, in die das Projekt des Tickets tatsaechlich planen darf; eine fremde ID wird
+  abgelehnt statt uebernommen. Der Board-Rang ist bewusst nur lesbar: Raenge berechnet der Server
+  aus den Nachbarkarten, und ein vom Client gesetzter Rang wuerde genau das
+  Nebenlaeufigkeitsproblem zurueckholen, das der Entwurf vermeidet. Dokumentiert in `API.md`.
+
+### Behoben
+
+- **Das Umhuellen von Kernmethoden fuehrt nicht mehr zu Endlosrekursion**, wenn RedmineUP-Plugins
+  installiert sind. `IssueQuery#available_columns`, `#initialize_available_filters` und
+  `IssuesController#parse_params_for_bulk_update` werden per UnboundMethod-Capture statt
+  `prepend` + `super` umhuellt: Jene Plugins patchen dieselben Methoden mit
+  `alias_method`-Paaren, wodurch eine per prepend eingefuegte Methode als ihr eigenes "Original"
+  eingefangen wird und die erste Abfrage mit `SystemStackError` abbricht.

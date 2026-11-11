@@ -1,0 +1,396 @@
+module ExpertAgileBoardsHelper
+  # Groups board columns into the header rows that render sub-columns.
+  #
+  # Sub-columns are a naming convention: statuses called "Dev: Review" and
+  # "Dev: Test" nest under one "Dev" header. Returns an array of rows, each a
+  # list of {:label, :colspan, :rowspan, :column} cells, where :column is set
+  # only on leaf cells.
+  #
+  # Only *adjacent* runs are merged: two "Dev:" columns separated by an
+  # unrelated column get a "Dev" header each. That keeps the column order the
+  # user configured and makes the grouping predictable.
+  def expert_agile_header_rows(columns)
+    depth = columns.map { |column| column.path.size }.max.to_i
+    depth = 1 if depth < 1
+    return [columns.map { |column| header_cell(column, 1, 1) }] if depth == 1
+
+    rows = Array.new(depth) { [] }
+    runs_of(columns).each do |prefix, run|
+      if prefix.nil?
+        # No prefix: the column spans every header row.
+        run.each { |column| rows[0] << header_cell(column, 1, depth) }
+      else
+        rows[0] << { :label => prefix, :colspan => run.size, :rowspan => 1, :column => nil }
+        run.each { |column| rows[1] << header_cell(column, 1, depth - 1) }
+      end
+    end
+    rows.reject(&:empty?)
+  end
+
+  # CSS classes for one card.
+  def expert_agile_card_classes(issue, query)
+    classes = ['ea-card', "ea-card-tracker-#{issue.tracker_id}"]
+    classes << 'ea-card-closed' if issue.closed?
+    classes << 'ea-card-overdue' if issue.overdue?
+    classes << 'ea-card-private' if issue.is_private?
+    classes << 'ea-colored' if expert_agile_card_color(issue, query)
+    classes.compact.join(' ')
+  end
+
+  # A ` style="..."` attribute for inline colour variables, or nothing, so an
+  # uncoloured element carries no empty attribute. Rails 6.1 (Redmine 5.0) has
+  # no tag.attributes, hence the hand-built one.
+  def expert_agile_style_attribute(css)
+    return nil if css.blank?
+
+    " style=\"#{ERB::Util.html_escape(css)}\"".html_safe
+  end
+
+  # The epic a card belongs to, as a coloured badge linking to it; nothing for
+  # a card without one. The colour is the epic's own stable palette entry, so
+  # every card of one epic carries the same hue on every board.
+  def expert_agile_epic_badge(epic)
+    return nil if epic.nil?
+
+    colour = ExpertAgileColor.for_principal(epic)
+    content_tag(:div, :class => 'ea-card-epic',
+                      :style => ExpertAgileColor.css_variables(colour, ExpertAgileColor::LANE_TINT)) do
+      link_to(epic.subject, issue_path(epic), :title => "#{epic.tracker.name} ##{epic.id}: #{epic.subject}")
+    end
+  end
+
+  # The inline colour of one card, or nil when the board is not coloured.
+  def expert_agile_card_style(issue, query)
+    ExpertAgileColor.css_variables(expert_agile_card_color(issue, query), ExpertAgileColor::CARD_TINT)
+  end
+
+  # Statuses offerable as board columns: everything the project's workflows can
+  # reach, closed ones included — a board usually wants exactly one "done"
+  # column, and which status that is, only the project knows.
+  def expert_agile_selectable_statuses(query)
+    scope = query.project ? query.project.rolled_up_statuses : IssueStatus.sorted
+    statuses = scope.to_a
+    # Anything already configured as a column stays selectable even if the
+    # workflow changed underneath it, so the panel never silently drops a column.
+    (statuses + query.board_statuses).uniq.sort_by { |s| [s.position.to_i, s.id] }
+  end
+
+  # Renders one card field through Redmine's own column_content, so custom
+  # fields, list values, users and dates all format exactly as they do in the
+  # issue list. Falls back to the raw value if a column raises — one awkward
+  # custom field must not take the whole board down.
+  def expert_agile_card_value(column, issue)
+    # The board's own field: there is no Issue#day_in_state for column_content
+    # to call, the value comes from the board's grouped journal lookup.
+    return expert_agile_days_in_status_label(issue) if column.name == :day_in_state
+
+    column_content(column, issue)
+  rescue StandardError
+    value = column.value_object(issue) rescue nil
+    value.is_a?(Array) ? value.join(', ') : value.to_s
+  end
+
+  def expert_agile_days_in_status_label(issue)
+    days = @query.days_in_status(issue)
+    return nil if days.nil?
+
+    days.zero? ? l(:label_expert_agile_today) : l(:label_expert_agile_days_count, :count => days)
+  end
+
+  # A plain-text opening of the description, for the card.
+  #
+  # Deliberately not textilizable: a card is a summary, and rendering full
+  # wiki markup inside one drags in headings, tables and images that break the
+  # card layout.
+  def expert_agile_description_excerpt(issue)
+    text = issue.description.to_s.strip
+    return nil if text.blank?
+
+    text = text.gsub(/<[^>]*>/, ' ')              # HTML — descriptions ingested
+                                                  # from email are full of it
+               .gsub(/!\S+!/, '')                 # inline image macros
+               .gsub(/\{\{[^}]*\}\}/, '')         # wiki macros
+               .gsub(/[*_+\-#>|]+/, ' ')          # textile decoration
+               .gsub(/\s+/, ' ')
+               .strip
+    # No :separator. Breaking on whitespace looks tidier until the text
+    # contains a long unbroken token — an email address or a URL, which is
+    # exactly what a forwarded mail starts with — and then the last space
+    # before the limit is near the beginning and the excerpt collapses to a
+    # few characters.
+    truncate(text, :length => RedmineExpertAgile.card_description_length)
+  end
+
+  # Card fields as a compact checkbox grid.
+  #
+  # Replaces Redmine's two-list-with-arrows column picker, which is built for
+  # ordering columns in a table and costs about 400px of height. Order carries
+  # far less meaning on a card, so a grid of checkboxes says the same thing in
+  # a quarter of the space. Posts `c[]`, exactly as core's picker does, so
+  # build_from_params handles it unchanged.
+  #
+  # Block columns (description) are listed alongside the inline ones — on a card
+  # that distinction does not exist.
+  # Whether the user may move this card at all.
+  #
+  # A board is not one project: a parent project's board carries its
+  # subprojects' issues, and the global board carries everything. The
+  # permission is checked where the issue lives, which is right — but the board
+  # used to decide draggability once, from the project the board itself is
+  # shown in, so every card on a parent's board was draggable and the
+  # subproject ones then bounced back with a refusal. A subproject that has not
+  # enabled the agile module refuses even an administrator, because Redmine
+  # checks the module before it checks who is asking.
+  #
+  # Memoised per project, not per card: a board can hold hundreds of cards from
+  # a handful of projects, and each `allowed_to?` walks that project's modules
+  # and the user's roles in it.
+  def expert_agile_card_movable?(issue)
+    project = issue.project
+    return false if project.nil?
+
+    @expert_agile_movable_projects ||= {}
+    @expert_agile_movable_projects.fetch(project.id) do
+      @expert_agile_movable_projects[project.id] =
+        User.current.allowed_to?(:edit_expert_agile_board, project)
+    end
+  end
+
+  # Status columns the card may be dropped into, as "3,5,7" for the card's
+  # data attribute, or nil for a card the board does not offer for dragging.
+  # See RedmineExpertAgile::MoveTargets. On the board page every card is asked,
+  # so everything they read is loaded once for the whole board; a move answer
+  # renders only the moved card.
+  def expert_agile_allowed_status_ids(issue, query)
+    return nil unless query && expert_agile_card_movable?(issue)
+
+    @expert_agile_move_targets ||=
+      RedmineExpertAgile::MoveTargets.new(User.current, query.board_columns.map(&:id))
+                                     .preload(query.board_issues_loaded? ? query.board_issues : [issue])
+    @expert_agile_move_targets.status_ids_for(issue).join(',')
+  end
+
+  # Options for the board's sprint selector: every issue, the running sprint,
+  # then each sprint the project may plan into with its status. A selected
+  # sprint that no longer resolves stays listed, so the select does not quietly
+  # snap back to "all issues" while the board shows none.
+  def expert_agile_board_sprint_options(query, sprints)
+    options = [[l(:label_expert_agile_sprint_all_issues), ''],
+               [l(:label_expert_agile_sprint_active_mode), ExpertAgileQuery::SPRINT_ACTIVE]]
+    options += sprints.map do |sprint|
+      ["#{sprint.name} (#{l("label_expert_agile_sprint_status_#{sprint.status_name}")})", sprint.id]
+    end
+    selected = query.sprint_id
+    if selected.is_a?(Integer) && sprints.none? { |sprint| sprint.id == selected }
+      options << [l(:label_expert_agile_sprint_unavailable), selected]
+    end
+    options_for_select(options, selected.to_s)
+  end
+
+  def expert_agile_card_field_tags(query)
+    selected = query.columns.map(&:name)
+    columns = (query.available_columns + query.available_block_columns).uniq(&:name)
+
+    safe_join(columns.map { |column|
+      # Long captions are ellipsised by CSS, so the full name goes in a title.
+      content_tag(:label, :class => 'ea-field-option', :title => column.caption) do
+        check_box_tag('c[]', column.name, selected.include?(column.name), :id => nil) +
+          content_tag(:span, column.caption)
+      end
+    })
+  end
+
+  # Accent colour for one swimlane, so adjacent lanes are told apart at a
+  # glance rather than all sharing one hue.
+  #
+  # A lane that carries its own colour — a tracker, priority or status the
+  # administrator has coloured — uses it, so the lane matches its cards.
+  # Anything else gets a stable palette colour derived from its id.
+  def expert_agile_swimlane_color_class(swimlane)
+    'ea-lane-colored'
+  end
+
+  # A card's place in the tree: its epic, and for a story's subtask the story
+  # in between. Nothing for a card outside any epic and story.
+  def expert_agile_card_lineage(issue, query)
+    epic = query.card_epic(issue)
+    story = query.card_story(issue)
+    return nil if epic.nil? && story.nil?
+
+    parts = []
+    parts << expert_agile_epic_badge(epic) if epic
+    if story
+      parts << content_tag(:div, :class => 'ea-card-story') do
+        link_to("#{l(:label_expert_agile_story_arrow)} ##{story.id} #{story.subject}", issue_path(story),
+                :title => "#{story.tracker.name} ##{story.id}: #{story.subject}")
+      end
+    end
+    safe_join(parts)
+  end
+
+  # A story's subtasks on its card: how many are done, as a count and a thin
+  # bar, folding open into the list with each one's status. <details> does
+  # the folding, so the card stays free of script.
+  def expert_agile_card_subtasks(children)
+    return nil if children.blank?
+
+    closed = children.count(&:closed?)
+    percent = (closed * 100.0 / children.size).round
+    content_tag(:details, :class => 'ea-card-subtasks') do
+      summary = content_tag(:summary) do
+        content_tag(:span, '', :class => 'ea-subtasks-bar', :style => "--ea-progress: #{percent}%;") +
+          content_tag(:span, l(:label_expert_agile_subtasks_done, :closed => closed, :total => children.size),
+                      :class => 'ea-subtasks-count')
+      end
+      items = children.map do |child|
+        content_tag(:li, :class => "ea-subtask#{' ea-subtask-closed' if child.closed?}") do
+          content_tag(:span, '', :class => 'ea-subtask-dot', :title => child.status_name,
+                                 :role => 'img', :'aria-label' => child.status_name) +
+            link_to("##{child.id} #{child.subject}", issue_path(child.id))
+        end
+      end
+      summary + content_tag(:ul, safe_join(items))
+    end
+  end
+
+  # How far an epic is along, as a small bar with its percentage. The numbers
+  # behind it are in the title; a move refreshes all three through
+  # `expert_agile_epic_progress_data` and the board script.
+  def expert_agile_epic_progress(progress)
+    return nil if progress.nil?
+
+    data = expert_agile_epic_progress_data(progress)
+    content_tag(:span, :class => 'ea-epic-progress', :title => data[:title],
+                       :style => "--ea-progress: #{data[:percent]}%;") do
+      content_tag(:span, '', :class => 'ea-epic-progress-bar') +
+        content_tag(:span, "#{data[:percent]} %", :class => 'ea-epic-progress-text')
+    end
+  end
+
+  def expert_agile_epic_progress_data(progress)
+    { :percent => progress.percent, :title => progress.title }
+  end
+
+  # A lane's title. An epic lane links to its epic, like the epic badge does.
+  def expert_agile_swimlane_label(swimlane)
+    return l(:label_expert_agile_swimlane_none_value) if swimlane.nil?
+    return link_to("##{swimlane.id} #{swimlane.subject}", issue_path(swimlane)) if swimlane.is_a?(Issue)
+
+    h(swimlane.to_s)
+  end
+
+  # The lane's colour as inline custom properties. A lane with nothing to take
+  # a colour from gets the palette's gray, so it still reads as a band.
+  def expert_agile_swimlane_style(swimlane)
+    colour = swimlane && RedmineExpertAgile::CardColor.for_container(swimlane)
+    ExpertAgileColor.css_variables(colour || ExpertAgileColor::PALETTE['gray'],
+                                   ExpertAgileColor::LANE_TINT)
+  end
+  # Saved boards (or charts) visible to the current user in this scope.
+  #
+  # Filtered to the exact STI type: ExpertAgileChartsQuery and
+  # ExpertAgileBacklogQuery are subclasses of ExpertAgileQuery, so an
+  # unqualified lookup would list charts among the boards.
+  def expert_agile_saved_queries(klass)
+    scope = klass.where(:type => klass.name).visible
+    scope = scope.global_or_on_project(@project) if @project
+    scope.sorted.to_a
+  end
+
+  def board_path_for(project)
+    project ? project_expert_agile_board_path(project) : expert_agile_board_path
+  end
+
+  # The `new` action, not the collection path: the save link re-submits the
+  # board form to it so the configuration the user is looking at arrives with
+  # the request. Pointing at the collection path GETs #index, which just
+  # redirects back to the board and loses everything.
+  def new_board_path_for(project)
+    project ? new_project_expert_agile_query_path(project) : new_expert_agile_query_path
+  end
+
+  # Colour of a column header, so the board reads as a set of stages at
+  # a glance. Only applied when the setting is on and the cell is a leaf.
+  def expert_agile_status_color_class(column)
+    expert_agile_status_color(column) ? 'ea-status-colored' : nil
+  end
+
+  def expert_agile_status_style(column)
+    ExpertAgileColor.css_variables(expert_agile_status_color(column), ExpertAgileColor::CARD_TINT)
+  end
+
+  def expert_agile_status_color(column)
+    return nil unless column && RedmineExpertAgile.status_colors?
+
+    RedmineExpertAgile::CardColor.for_status(column.status)
+  end
+  # Colour of one card as #rrggbb, or nil when the board is not coloured.
+  def expert_agile_card_color(issue, query)
+    base = query && query.color_base
+    return nil if base.blank? || base == 'none'
+
+    RedmineExpertAgile::CardColor.for(issue, base)
+  end
+  # The data the board script needs, emitted as a JSON island rather than
+  # inline JavaScript so the board works under `script-src 'self'`.
+  def expert_agile_board_data(query, project)
+    {
+      :mode => 'board',
+      :dropParam => 'status_id',
+      :updateUrlTemplate => update_expert_agile_board_issue_path(:id => '__ID__'),
+      :tooltipUrlTemplate => expert_agile_board_issue_tooltip_path(:id => '__ID__'),
+      :queryId => query.id,
+      :projectId => project&.id,
+      :editable => User.current.allowed_to?(:edit_expert_agile_board, project, :global => project.nil?),
+      :columns => query.board_columns.map(&:to_h),
+      # What the lanes are grouped by, sent back with every move so the answer
+      # carries the lanes on screen, and whether a card may be dropped into
+      # another lane to change that field. Where it may not, the board holds
+      # the card back and the server refuses the drop.
+      :swimlaneField => query.grouped? ? query.group_by : nil,
+      :swimlaneWritable => query.grouped? && ExpertAgileQuery.swimlane_attribute(query.group_by).present?,
+      :labels => {
+        :wipExceeded => l(:text_expert_agile_wip_limit_exceeded),
+        # Only for a request that never came back with an answer. A move the
+        # server refuses carries its own reason, which the board shows instead.
+        :moveFailed => l(:error_expert_agile_move_failed),
+        # Except when the refusal has no body to carry it: Redmine answers a
+        # missing permission and an expired session with an empty 403 / 401.
+        :notPermitted => l(:error_expert_agile_move_not_permitted),
+        :sessionExpired => l(:error_expert_agile_session_expired),
+        # For the one failure that is not a refusal: the server saved the move
+        # and the board could not show it.
+        :saveNotShown => l(:error_expert_agile_move_saved_but_not_shown),
+        # Titles of the column markers shown while a card is being dragged.
+        :dropAllowed => l(:text_expert_agile_drop_allowed),
+        :dropBlocked => l(:text_expert_agile_drop_blocked),
+        # The server's own refusal wording with its placeholders left in, for
+        # a drop onto a blocked column the board refuses without asking.
+        :transitionBlocked => l(:error_expert_agile_status_transition_not_allowed,
+                                :tracker => '%{tracker}', :from => '%{from}', :to => '%{to}'),
+        :transitionsAllowed => l(:text_expert_agile_transitions_allowed,
+                                 :from => '%{from}', :statuses => '%{statuses}'),
+        :transitionsNone => l(:text_expert_agile_transitions_none, :from => '%{from}'),
+        :laneBlocked => query.grouped? ? l(:error_expert_agile_swimlane_not_writable,
+                                           :field => query.group_by_column.caption) : nil,
+        :laneNotShown => l(:error_expert_agile_move_saved_lane_not_shown)
+      }
+    }.to_json
+  end
+
+  private
+
+  def header_cell(column, colspan, rowspan)
+    { :label => column.leaf_name, :colspan => colspan, :rowspan => rowspan, :column => column }
+  end
+
+  # [[prefix_or_nil, [columns...]], ...] over adjacent columns sharing a prefix.
+  def runs_of(columns)
+    columns.chunk_while do |a, b|
+      a.path.size > 1 && b.path.size > 1 && a.path.first == b.path.first
+    end.map do |run|
+      prefix = run.size >= 1 && run.first.path.size > 1 ? run.first.path.first : nil
+      [prefix, run]
+    end
+  end
+end

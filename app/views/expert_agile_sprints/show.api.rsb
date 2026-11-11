@@ -1,0 +1,16 @@
+api.expert_agile_sprint do
+  api.id @sprint.id
+  api.project_id @sprint.project_id
+  api.name @sprint.name
+  api.description @sprint.description
+  api.status @sprint.status_name
+  api.sharing @sprint.sharing_name
+  api.start_date @sprint.start_date
+  api.end_date @sprint.end_date
+  # Shared sprints hold issues of other projects too. Only the ones the caller
+  # may see are counted, or the totals would report on projects they have no
+  # access to.
+  visible_issues = Issue.visible.where(:id => @sprint.expert_agile_data.select(:issue_id))
+  api.issue_count visible_issues.count
+  api.story_points @sprint.expert_agile_data.where(:issue_id => visible_issues.select(:id)).sum(:story_points)
+end

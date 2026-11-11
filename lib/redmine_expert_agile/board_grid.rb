@@ -1,0 +1,180 @@
+# Builds the two-dimensional board: swimlanes down, status columns across.
+#
+# Lives in lib/ rather than under app/models/expert_agile_query/ so it can be
+# required explicitly. Defining it as a constant nested inside the model would
+# make Zeitwerk autoload it while ExpertAgileQuery is still being defined — a
+# load cycle that only shows up at boot.
+#
+# Everything here derives from ONE loaded set of issues. `group_by_statement`
+# deliberately is not used for SQL: for an association column it returns the
+# bare column name ("tracker"), which is a Ruby-side grouping key, not a SQL
+# expression — feeding it to `group()` produces "Unknown column 'tracker'".
+module RedmineExpertAgile
+  module BoardGrid
+    # The issues on the board: filtered, rank-ordered and capped. Loaded once
+    # and reused by the grid, the swimlanes and the totals.
+    def board_issues
+      @board_issues ||= begin
+        limit = RedmineExpertAgile.board_items_limit
+        scope = board_scope.sorted_by_rank
+        @truncated = scope.except(:order, :limit).count > limit
+        scope.limit(limit).to_a
+      end
+    end
+
+    # Whether the board's issues are already in memory. Lets a caller that
+    # needs one card — a move answer — avoid loading the whole board for it.
+    def board_issues_loaded?
+      !@board_issues.nil?
+    end
+
+    # Whether the board hit its item cap, so the view can say so instead of
+    # silently showing a partial board.
+    def truncated?
+      board_issues
+      @truncated.present?
+    end
+
+    # The swimlanes to render, with a trailing nil lane for issues that have no
+    # value for the grouped field.
+    #
+    # Derived from the loaded issues, so a lane only appears when it actually
+    # holds a card, and no extra query is needed.
+    def swimlanes
+      return [] unless grouped?
+
+      @swimlanes ||= begin
+        column = group_by_column
+        values = board_issues.map { |issue| column.group_value(issue) }
+        lanes = sort_lanes(values.compact.uniq)
+        lanes << nil if values.any?(&:nil?)
+        lanes
+      end
+    end
+
+    # The board grid: {[status_id, swimlane_key] => [issues]} when grouped,
+    # {[status_id] => [issues]} otherwise. Cells keep the rank order they were
+    # loaded in.
+    def issue_board
+      @issue_board ||= begin
+        column = grouped? ? group_by_column : nil
+        board_issues.group_by do |issue|
+          if column
+            [issue.status_id, lane_key(column.group_value(issue))]
+          else
+            [issue.status_id]
+          end
+        end
+      end
+    end
+
+    # When each board issue last changed status, as {issue_id => Time}.
+    #
+    # One grouped query for the whole board. Asking per card would be an N+1
+    # over the journals.
+    def status_changed_at
+      @status_changed_at ||= begin
+        ids = board_issues.map(&:id)
+        if ids.empty?
+          {}
+        else
+          JournalDetail.joins(:journal)
+                       .where(:journals => { :journalized_type => 'Issue', :journalized_id => ids })
+                       .where(:property => 'attr', :prop_key => 'status_id')
+                       .group("#{Journal.table_name}.journalized_id")
+                       .maximum("#{Journal.table_name}.created_on")
+        end
+      end
+    end
+
+    # Whole days the issue has sat in its current status. An issue that has
+    # never changed status counts from when it was created.
+    def days_in_status(issue)
+      since = status_changed_at[issue.id] || issue.created_on
+      return nil if since.blank?
+
+      ((Time.now - since) / 86_400).floor
+    end
+
+    # Every issue in one lane, across all its columns.
+    def swimlane_issues(swimlane)
+      return board_issues if swimlane == :none || !grouped?
+
+      column = group_by_column
+      key = lane_key(swimlane)
+      board_issues.select { |issue| lane_key(column.group_value(issue)) == key }
+    end
+
+    # Aggregates for the lane band. Story points are already loaded with the
+    # board, so this costs no extra query.
+    def swimlane_totals(swimlane)
+      issues = swimlane_issues(swimlane)
+      {
+        :issue_count => issues.size,
+        :story_points => issues.sum { |issue| issue.story_points.to_i }
+      }
+    end
+
+    # The lane id a cell and a lane band carry in data-swimlane-id: the
+    # record's id, or '' for the "no value" lane and an ungrouped board.
+    def swimlane_dom_id(swimlane)
+      return '' if swimlane.nil? || swimlane == :none
+
+      lane_key(swimlane).to_s
+    end
+
+    # The lane one issue is drawn in, in the same terms.
+    def swimlane_dom_id_for(issue)
+      grouped? ? swimlane_dom_id(group_by_column.group_value(issue)) : ''
+    end
+
+    # Every lane with its totals, for a move to refresh the lane bands with.
+    # The same totals the page renders, so the two cannot disagree.
+    def swimlane_summaries
+      swimlanes.map do |swimlane|
+        summary = swimlane_totals(swimlane).merge(:id => swimlane_dom_id(swimlane))
+        progress = epic_progress(swimlane)
+        summary[:progress] = progress if progress
+        summary
+      end
+    end
+
+    # Drops everything derived from the loaded issues, for a caller that has
+    # just written one of them.
+    def reset_board_grid!
+      @board_issues = nil
+      @truncated = nil
+      @swimlanes = nil
+      @issue_board = nil
+      @status_changed_at = nil
+    end
+
+    # Issues of one cell. Pass :none for an ungrouped board, or a swimlane
+    # (including nil, the "no value" lane) for a grouped one.
+    def issues_for(status_id, swimlane = :none)
+      key = swimlane == :none ? [status_id] : [status_id, lane_key(swimlane)]
+      issue_board[key] || []
+    end
+
+    private
+
+    # Association lanes are identified by id; a scalar grouped value is its own
+    # key. nil stays nil, which is the "no value" lane.
+    def lane_key(value)
+      value.respond_to?(:id) ? value.id : value
+    end
+
+    # Redmine's own ordering where the lane object has one (trackers, statuses
+    # and priorities carry `position`), otherwise alphabetical.
+    def sort_lanes(lanes)
+      # Epics by subject: an issue's to_s leads with its tracker and id.
+      return lanes.sort_by { |lane| lane.subject.to_s.downcase } if lanes.all? { |lane| lane.is_a?(Issue) }
+
+      if lanes.all? { |lane| lane.respond_to?(:position) && lane.position.present? }
+        lanes.sort_by(&:position)
+      else
+        lanes.sort_by { |lane| lane.to_s.downcase }
+      end
+    end
+  end
+end

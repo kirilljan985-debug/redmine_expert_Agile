@@ -1,0 +1,778 @@
+/* Agile board styles.
+ *
+ * Loaded only on the plugin's own pages, not from a global layout hook.
+ */
+
+.ea-board {
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+/* The copy of the column headers that stays at the top of the window while a
+ * tall board scrolls past (see pinHeader in expert_agile_board.js, which sets
+ * its position). overflow clips it to the part of the board that is on
+ * screen, and the white background fills the gaps border-spacing leaves
+ * between the headers, which the cards would otherwise show through. It sits
+ * above the board but below Redmine's own fixed header bar on narrow screens
+ * (z-index 9999), which it slides under at the board's end.
+ *
+ * No display rule here: the script shows and hides it with the hidden
+ * attribute. Redmine links this stylesheet for the screen only, so a
+ * display:none here would not reach a printout, and the copy would print as
+ * a second head above the board. */
+.ea-pinned-head {
+  position: fixed;
+  z-index: 20;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+/* Not table-layout:fixed, and not width:100%. Fixed layout divides the
+ * available width by the number of columns, so a board with many statuses
+ * squeezes each to a few dozen pixels and the card text wraps one character
+ * per line. Auto layout alone is no better: cells size to their content, so
+ * the column holding the longest subject becomes twice as wide as its
+ * neighbours. Every column is therefore pinned to the same explicit width and
+ * the board scrolls sideways. */
+.ea-board-table {
+  border-collapse: separate;
+  border-spacing: 6px 0;
+  width: auto;
+}
+
+.ea-column-header {
+  background: #eef1f5;
+  border: 1px solid #d3d9e0;
+  border-bottom-width: 3px;
+  border-radius: 4px 4px 0 0;
+  padding: 6px 8px;
+  font-weight: 600;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+  width: 300px;
+  min-width: 300px;
+  max-width: 300px;
+}
+
+.ea-column-name { margin-right: 6px; }
+
+.ea-column-count {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #ffffff;
+  border: 1px solid #cdd4dc;
+  color: #444;
+  font-weight: 600;
+  font-size: 0.8em;
+  text-align: center;
+}
+
+.ea-column-wip {
+  float: right;
+  font-weight: normal;
+  font-size: 0.8em;
+  color: #7a828c;
+}
+
+/* WIP limits are advisory: they colour the header, they never block a move. */
+.ea-column-header.ea-wip-over { background: #fdecec; border-color: #e2a6a6; }
+.ea-column-header.ea-wip-over .ea-column-count { background: #f6c9c9; border-color: #e2a6a6; }
+.ea-column-header.ea-wip-under { background: #fffaea; border-color: #e3d59b; }
+
+
+.ea-cell {
+  border: 1px solid #dfe3e8;
+  border-top: none;
+  vertical-align: top;
+  padding: 6px;
+  background: #f7f8fa;
+  border-radius: 0 0 4px 4px;
+  box-sizing: border-box;
+}
+
+/* Column width belongs to the board's table, not to every .ea-cell — the
+ * backlog reuses the class, and an unscoped fixed width made each drop zone
+ * wider than the lane containing it and overlap its neighbour. */
+.ea-board-table .ea-cell {
+  width: 300px;
+  min-width: 300px;
+  max-width: 300px;
+}
+
+.ea-cell.ea-cell-hover { background: #e8f0fb; box-shadow: inset 0 0 0 2px #9dbde8; }
+
+.ea-cell-issues { min-height: 60px; }
+
+/* While a card is dragged every column says whether the workflow lets that
+ * card in. Blocked is stripes as well as colour, so it does not rely on
+ * telling red from green; it is laid over the header's own status colour
+ * rather than replacing it, so the column stays recognisable. */
+.ea-drag-active .ea-cell.ea-drop-allowed {
+  background: #eef8ef;
+  box-shadow: inset 0 0 0 2px #8cc896;
+}
+.ea-drag-active .ea-cell.ea-drop-allowed.ea-cell-hover {
+  background: #dcf1df;
+  box-shadow: inset 0 0 0 3px #4fa35d;
+}
+.ea-drag-active .ea-cell.ea-drop-origin { background: #f7f8fa; box-shadow: inset 0 0 0 2px #c6ccd4; }
+.ea-drag-active .ea-cell.ea-drop-blocked,
+.ea-drag-active .ea-column-header.ea-drop-blocked {
+  background-image: repeating-linear-gradient(135deg, rgba(190, 70, 70, 0.10) 0 8px, transparent 8px 16px);
+  cursor: not-allowed;
+}
+.ea-drag-active .ea-cell.ea-drop-blocked { background-color: #f4eeee; }
+.ea-drag-active .ea-cell.ea-drop-blocked .ea-card { opacity: 0.55; cursor: not-allowed; }
+.ea-drag-active .ea-column-header.ea-drop-blocked { opacity: 0.6; }
+.ea-drag-active .ea-column-header.ea-drop-allowed { box-shadow: inset 0 -3px 0 #4fa35d; }
+.ea-drag-active .ea-column-header.ea-drop-origin { box-shadow: inset 0 -3px 0 #9aa3ad; }
+
+/* --- Cards --------------------------------------------------------------- */
+
+.ea-card {
+  background: #fff;
+  border: 1px solid #dcdfe4;
+  border-left: 4px solid #b9bec6;
+  border-radius: 4px;
+  padding: 7px 9px;
+  margin-bottom: 6px;
+  cursor: grab;
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  /* Long tokens — URLs, stack traces, German compounds — must break rather
+   * than force the column wider or spill out of the card. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ea-card:hover { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12); border-color: #c6cbd2; }
+.ea-card.ea-dragging { opacity: 0.45; }
+.ea-card.ea-card-closed { opacity: 0.6; }
+.ea-card.ea-card-overdue { border-left-color: #cc3b3b; }
+.ea-card.ea-card-private { border-style: dashed; }
+
+.ea-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+  font-size: 11px;
+  color: #6b727c;
+}
+
+.ea-card-id a { color: #6b727c; font-weight: 600; text-decoration: none; }
+.ea-card-id a:hover { text-decoration: underline; }
+
+.ea-card-tracker {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #eef1f5;
+  color: #5a616b;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.ea-card-subject { margin: 2px 0 5px; }
+
+/* The epic a card belongs to. Its colour comes inline like every other
+ * accent, so the badge needs no class per epic. */
+.ea-card-epic {
+  display: inline-block;
+  max-width: 100%;
+  margin: 1px 0 3px;
+  padding: 0 6px;
+  border-left: 3px solid var(--ea-accent, #8a8f98);
+  border-radius: 3px;
+  background: var(--ea-tint, #f1f2f4);
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+.ea-card-epic a { color: inherit; text-decoration: none; }
+.ea-card-epic a:hover { text-decoration: underline; }
+
+.ea-card-subject a {
+  color: #1f2328;
+  text-decoration: none;
+  font-weight: 500;
+  /* Three lines is enough to identify an issue; the tooltip has the rest. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ea-card-subject a:hover { text-decoration: underline; }
+
+.ea-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #5a616b;
+}
+
+.ea-card-assignee {
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ea-card-story-points,
+.ea-card-hours,
+.ea-card-done,
+.ea-card-status {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #eef1f5;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ea-card-story-points { background: #e5ecfb; color: #2f5aa8; }
+.ea-card-done { background: #e8f5e8; color: #2f7a2f; }
+.ea-card-story-points ~ .ea-card-done,
+.ea-card-hours ~ .ea-card-done { margin-left: 0; }
+
+.ea-card-fields { margin: 5px 0 0; padding-top: 4px; border-top: 1px solid #f0f1f3; font-size: 11px; }
+.ea-card-fields dt { float: left; clear: left; margin-right: 4px; color: #858c95; }
+.ea-card-fields dt:after { content: ':'; }
+.ea-card-fields dd { margin: 0 0 1px; }
+
+.ea-tooltip { max-width: 400px; }
+.ea-tooltip-attributes { list-style: none; padding-left: 0; }
+
+.ea-truncated { margin-bottom: 8px; }
+
+/* --- Card colour ------------------------------------------------------
+ * A coloured card carries its colour inline as two custom properties: the
+ * accent for its left border, and a pale tint of it for its background. The
+ * server computes the tint, and keeps it light whatever colour was picked, so
+ * the card's dark text stays readable. One rule for every colour — the colour
+ * itself is data, not a class name.
+ */
+.ea-card.ea-colored {
+  border-left-color: var(--ea-accent);
+  background: var(--ea-tint);
+}
+
+/* The colour field on the administration screen: Coloris draws the swatch
+ * beside the text input and opens the picker (coloris.min.css, vendored).
+ * These rules only size the input to a hex value and keep it monospaced, so a
+ * column of colours reads as one. */
+.ea-color-field .clr-field { display: inline-block; }
+
+.ea-color-field input.ea-color-input {
+  width: 9.5em;
+  padding-left: 32px;
+  font-family: Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.ea-color-field .clr-field button {
+  width: 24px;
+  height: 18px;
+  left: 4px;
+  right: auto;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .25);
+}
+
+
+/* The refusal message: the headline is Redmine's own flash, with what the
+ * server could add underneath — which statuses are open from here, and for an
+ * administrator the way into the workflow that refused. */
+.ea-board-message-hint {
+  margin-top: 4px;
+  font-weight: normal;
+}
+
+.ea-board-message-link {
+  display: inline-block;
+  margin-top: 4px;
+  font-weight: normal;
+}
+
+
+/* --- Charts ------------------------------------------------------------- */
+.ea-chart-container { position: relative; height: 360px; margin-top: 10px; }
+
+/* Column headers tinted by status, so the stages of the workflow read at a
+ * glance. Only the bottom border is coloured — a fully tinted header competes
+ * with the cards for attention. */
+.ea-column-header.ea-status-colored { border-bottom-color: var(--ea-accent); }
+
+
+
+.ea-avatar {
+  vertical-align: middle;
+  border-radius: 50%;
+  margin-right: 3px;
+}
+.ea-card-assignee { display: inline-flex; align-items: center; min-width: 0; }
+.ea-card-assignee-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- Sidebar ------------------------------------------------------------- */
+.ea-sidebar-nav { list-style: none; padding-left: 0; margin: 0 0 10px; }
+.ea-sidebar-nav li { margin: 2px 0; }
+.ea-sidebar-nav a.selected { font-weight: bold; }
+.ea-sidebar-nav a.ea-sprint-active { font-weight: bold; }
+.ea-sidebar-nav a.ea-sprint-closed { color: #8a919b; }
+
+/* --- Swimlanes ----------------------------------------------------------- */
+
+/* The lane band spans every column, so the row reads as one lane rather than a
+ * label stuck to the left edge. */
+.ea-swimlane-title th {
+  text-align: left;
+  padding: 6px 10px;
+  border: 1px solid #d3d9e0;
+  border-left-width: 5px;
+  border-radius: 4px 4px 0 0;
+  background: #f0f2f5;
+  font-weight: 600;
+}
+
+/* The band spans every column, so on a board wide enough to scroll the lane
+ * name would slide out of view. Pinning the name keeps it readable while the
+ * columns move underneath it. */
+.ea-swimlane-name {
+  font-size: 1.02em;
+  position: sticky;
+  left: 10px;
+}
+
+.ea-swimlane-totals { float: right; font-weight: normal; }
+
+.ea-swimlane-count, .ea-swimlane-points {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #fff;
+  border: 1px solid #cdd4dc;
+  font-size: 0.82em;
+  text-align: center;
+}
+
+.ea-swimlane-points { background: #e5ecfb; color: #2f5aa8; border-color: #c3d3f0; }
+/* inline-block above would otherwise override the attribute. */
+.ea-swimlane-points[hidden] { display: none; }
+
+/* Separate one lane from the next. */
+.ea-swimlane td { border-bottom: 2px solid #e3e7ec; padding-bottom: 10px; }
+
+/* Per-lane accent. Only the band is tinted — tinting the cells as well would
+ * fight with the card colours. */
+.ea-swimlane-title.ea-lane-colored th {
+  border-left-color: var(--ea-accent);
+  background: var(--ea-tint);
+}
+
+.ea-card-description {
+  margin: 4px 0 0;
+  padding-top: 4px;
+  border-top: 1px solid #f0f1f3;
+  color: #5a616b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* --- Board options panel ------------------------------------------------- */
+
+/* Three panels side by side that wrap on narrow screens, instead of three
+ * stacked fieldsets whose middle one was a 400px dual listbox. */
+.ea-options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px 20px;
+  align-items: start;
+}
+
+.ea-options-panel { min-width: 0; }
+
+.ea-options-panel h4 {
+  margin: 0 0 6px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid #e3e7ec;
+  font-size: 0.92em;
+  color: #444;
+}
+
+.ea-options-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 5px;
+}
+
+.ea-options-row label { flex: 0 0 44%; color: #555; }
+.ea-options-row select { max-width: 100%; }
+
+/* Card fields: a dense checkbox grid. Order matters far less on a card than in
+ * a table, so the space the arrow-based picker spends on ordering is better
+ * spent showing every field at once. */
+.ea-field-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1px 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  /* A row cut in half at the bottom edge looks like a rendering fault; the
+   * fade makes it read as "there is more below". */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent 100%);
+}
+
+.ea-field-option {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ea-field-option input { margin: 0; }
+.ea-field-option span { overflow: hidden; text-overflow: ellipsis; }
+
+/* Status columns and their WIP limits, three tight columns. */
+.ea-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 3.2em 3.2em;
+  gap: 2px 6px;
+  align-items: center;
+  max-height: 220px;
+  overflow-y: auto;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent 100%);
+}
+
+.ea-status-grid-head {
+  font-size: 0.8em;
+  color: #858c95;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ea-status-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ea-status-name.ea-status-closed { color: #858c95; font-style: italic; }
+.ea-wip-input { width: 100%; box-sizing: border-box; padding: 1px 3px; }
+
+.ea-hint { color: #858c95; margin: 0 0 6px; font-size: 0.85em; }
+
+/* --- Backlog planner ----------------------------------------------------- */
+
+.ea-backlog {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  align-items: flex-start;
+  padding-bottom: 8px;
+}
+
+.ea-backlog-lane {
+  flex: 0 0 300px;
+  min-width: 300px;
+  box-sizing: border-box;
+  border: 1px solid #d3d9e0;
+  border-radius: 5px;
+  background: #fbfcfd;
+  overflow: hidden;
+}
+
+/* The unplanned column is the source, not a target you plan into — dashed to
+ * say so. */
+.ea-backlog-lane.ea-backlog-source { border-style: dashed; background: #fff; }
+
+.ea-backlog-lane-header {
+  margin: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid #e3e7ec;
+  border-left: 4px solid #b9bec6;
+  background: #f2f4f7;
+  font-size: 1em;
+  line-height: 1.3;
+}
+
+.ea-backlog-lane-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ea-backlog-lane-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ea-backlog-lane-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.78em;
+  font-weight: normal;
+  color: #7a828c;
+}
+
+.ea-backlog-status {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 0.92em;
+  background: #e6e9ee;
+  color: #5a616b;
+}
+.ea-backlog-status.ea-sprint-active { background: #dff0df; color: #2f7a2f; }
+.ea-backlog-status.ea-sprint-closed { background: #eceef1; color: #8a919b; }
+
+.ea-backlog-lane-totals { white-space: nowrap; font-weight: normal; }
+
+.ea-lane-count, .ea-lane-points {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #fff;
+  border: 1px solid #cdd4dc;
+  font-size: 0.78em;
+  text-align: center;
+}
+.ea-lane-points { background: #e5ecfb; color: #2f5aa8; border-color: #c3d3f0; }
+
+/* Lanes scroll internally so a 500-card backlog does not make the page
+ * itself thousands of pixels tall. */
+.ea-backlog-drop {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 0;
+  padding: 8px;
+  background: transparent;
+  min-height: 120px;
+  max-height: calc(100vh - 300px);
+  overflow-y: auto;
+}
+
+.ea-backlog-drop.ea-cell-hover { background: #e8f0fb; box-shadow: inset 0 0 0 2px #9dbde8; }
+
+.ea-backlog-empty-hint {
+  margin: 0;
+  padding: 14px 6px;
+  text-align: center;
+  color: #9aa1aa;
+  font-size: 0.85em;
+  border: 1px dashed #dfe3e8;
+  border-radius: 4px;
+}
+
+/* Sprint / version switch as a segmented control rather than two bare links. */
+.ea-backlog-switch {
+  display: inline-flex;
+  margin-bottom: 10px;
+  border: 1px solid #cdd4dc;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.ea-backlog-switch a {
+  padding: 4px 14px;
+  font-size: 0.92em;
+  color: #4a5058;
+  text-decoration: none;
+  background: #f5f7f9;
+  border-right: 1px solid #cdd4dc;
+}
+.ea-backlog-switch a:last-child { border-right: none; }
+.ea-backlog-switch a:hover { background: #e9edf2; }
+.ea-backlog-switch a.selected { background: #3d7ec4; color: #fff; font-weight: 600; }
+
+.ea-backlog-empty {
+  flex: 0 0 280px;
+  padding: 14px;
+  border: 1px dashed #cdd4dc;
+  border-radius: 5px;
+  color: #7a828c;
+  background: #fff;
+}
+
+/* The lane carries the same accent class as a board swimlane, so a sprint
+ * reads the same on both screens. */
+.ea-backlog-lane.ea-lane-colored .ea-backlog-lane-header { border-left-color: var(--ea-accent); }
+
+/* --- Epic progress -----------------------------------------------------
+ * A thin bar with its percentage, in an epic's lane header and on the epic
+ * itself. The share done arrives inline as --ea-progress; the lane's own
+ * accent colours it where there is one. */
+.ea-epic-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  font-size: 0.8em;
+  font-weight: normal;
+  color: #555;
+  vertical-align: middle;
+}
+.ea-epic-progress-bar {
+  position: relative;
+  display: inline-block;
+  width: 80px;
+  height: 6px;
+  border-radius: 3px;
+  background: #e3e5e8;
+  overflow: hidden;
+}
+.ea-epic-progress-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--ea-progress, 0%);
+  background: var(--ea-accent, #4f9d69);
+}
+.expert-agile-epic-progress .ea-epic-progress { margin-left: 0; }
+.expert-agile-epic-progress-detail { margin-left: 8px; color: #777; }
+
+/* --- Place in the tree -------------------------------------------------
+ * Under the epic badge, a story's subtask names its story; a story lists
+ * its subtasks, folded behind a count and a thin bar. */
+.ea-card-story {
+  margin: 0 0 3px;
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ea-card-story a { color: #6b727c; text-decoration: none; }
+.ea-card-story a:hover { text-decoration: underline; }
+
+.ea-card-subtasks { margin-top: 5px; font-size: 0.85em; }
+.ea-card-subtasks summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: #555;
+  list-style-position: inside;
+}
+.ea-card-subtasks ul { margin: 4px 0 0; padding-left: 4px; list-style: none; }
+.ea-subtask {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ea-subtask a { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+.ea-subtask a:hover { text-decoration: underline; }
+.ea-subtask-closed a { color: #8a8f98; text-decoration: line-through; }
+.ea-subtask-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c3c7cd;
+}
+.ea-subtask-closed .ea-subtask-dot { background: #4f9d69; }
+
+.ea-subtasks-bar {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 44px;
+  height: 5px;
+  border-radius: 3px;
+  background: #e3e5e8;
+  overflow: hidden;
+  vertical-align: middle;
+}
+.ea-subtasks-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--ea-progress, 0%);
+  background: #4f9d69;
+}
+
+/* --- Epic overview page ---------------------------------------------- */
+.ea-epic-block {
+  margin: 0 0 14px;
+  border: 1px solid #dfe2e6;
+  border-left: 4px solid var(--ea-accent, #8a8f98);
+  border-radius: 4px;
+  background: #fff;
+}
+.ea-epic-block.ea-epic-closed { opacity: 0.7; }
+.ea-epic-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--ea-tint, #f6f7f8);
+  cursor: pointer;
+}
+.ea-epic-title { font-weight: 600; font-size: 1.05em; }
+.ea-epic-title a { text-decoration: none; }
+.ea-epic-status {
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #fff;
+  font-size: 0.85em;
+  color: #555;
+}
+.ea-epic-summary .ea-epic-progress { margin-left: 0; }
+.ea-epic-counts { font-size: 0.85em; color: #777; }
+.ea-epic-empty { margin: 8px 12px; color: #888; }
+table.ea-epic-rows { margin: 0; border: 0; }
+table.ea-epic-rows td.subject { text-align: left; }
+table.ea-epic-rows .ea-row-ref { margin-right: 4px; font-size: 0.9em; }
+.ea-epic-row.ea-depth-1 td.subject { padding-left: 28px; }
+.ea-epic-row.ea-depth-2 td.subject { padding-left: 48px; }
+.ea-epic-row.ea-depth-3 td.subject { padding-left: 68px; }
+.ea-epic-row.ea-depth-1 td.subject::before,
+.ea-epic-row.ea-depth-2 td.subject::before,
+.ea-epic-row.ea-depth-3 td.subject::before { content: "↳ "; color: #a0a5ad; }
+.ea-epic-row.ea-row-closed td { color: #8a8f98; }
+.ea-epic-row.ea-row-closed td.subject a { text-decoration: line-through; }
+td.ea-row-subtasks { white-space: nowrap; font-size: 0.9em; color: #555; }
+
+/* --- Completing a sprint ---------------------------------------------- */
+.ea-backlog-lane-complete {
+  margin-left: 8px;
+  font-size: 0.8em;
+  font-weight: normal;
+  white-space: nowrap;
+}
+.ea-sprint-complete-issues { margin: 6px 0 0; padding-left: 18px; }
+.ea-sprint-complete-status { color: #777; font-size: 0.9em; }
+.ea-sprint-complete-new { margin: 0 0 6px 24px; }
+.ea-sprint-complete-new p { padding-left: 140px; }
+.ea-sprint-complete-new label { width: 130px; margin-left: -140px; }

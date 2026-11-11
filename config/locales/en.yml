@@ -1,0 +1,240 @@
+# English locale for redmine_expert_agile.
+#
+# Keep this file line-for-line in sync with every other locale file (de, es,
+# fr, it, pt, pt-BR) — same keys, same order.
+# Note: "expert" is the company name and stays lowercase in every user-facing
+# value, including at the start of a label.
+en:
+  # --- Project modules ------------------------------------------------
+  project_module_expert_agile: expert Agile
+  project_module_expert_agile_backlog: expert Agile Backlog
+
+  # --- Permissions ----------------------------------------------------
+  permission_view_expert_agile_board: View agile board
+  permission_edit_expert_agile_board: Edit agile board
+  permission_add_expert_agile_queries: Save agile boards
+  permission_manage_public_expert_agile_queries: Manage public agile boards
+  permission_view_expert_agile_charts: View agile charts
+  permission_manage_expert_agile_sprints: Manage sprints
+  permission_view_expert_agile_backlog: View backlog
+  permission_manage_expert_agile_backlog: Manage backlog
+
+  # --- General labels -------------------------------------------------
+  label_expert_agile: expert Agile
+  label_expert_agile_board: Agile board
+  label_expert_agile_board_new: New board
+  label_expert_agile_board_plural: Boards
+  label_expert_agile_backlog: Backlog
+  label_expert_agile_backlog_new: New backlog
+  label_expert_agile_backlog_plural: Backlogs
+  label_expert_agile_charts: Agile charts
+  label_expert_agile_chart_new: New chart
+
+  # --- Settings: sections ---------------------------------------------
+  label_expert_agile_settings_board: Board
+  label_expert_agile_settings_colors: Colors
+  label_expert_agile_settings_estimates: Estimates
+  label_expert_agile_settings_sprints: Sprints
+  label_expert_agile_settings_epics: Epics
+  label_expert_agile_settings_charts: Charts
+
+  # --- Settings: board ------------------------------------------------
+  label_expert_agile_default_card_columns: Default card fields
+  text_expert_agile_default_card_columns: Comma separated field names shown on new boards, e.g. tracker,assigned_to
+  label_expert_agile_issues_per_column: Issues per column
+  label_expert_agile_board_items_limit: Board item limit
+  text_expert_agile_board_items_limit: Maximum number of issues loaded into a single board render
+  label_expert_agile_allow_create_card: Allow creating issues on the board
+  label_expert_agile_auto_assign_on_move: Assign to me when moving a card
+  text_expert_agile_auto_assign_on_move: Only applies to unassigned issues whose status actually changes
+  label_expert_agile_minimize_closed: Collapse closed columns
+
+  # --- Settings: colors -----------------------------------------------
+  label_expert_agile_color_base: Color cards by
+  label_expert_agile_color_base_none: No color
+  label_expert_agile_color_base_tracker: Tracker
+  label_expert_agile_color_base_priority: Priority
+  label_expert_agile_color_base_status: Status
+  label_expert_agile_color_base_assignee: Assignee
+  label_expert_agile_color_base_project: Project
+  label_expert_agile_color_base_spent_time: Spent time
+  label_expert_agile_status_colors: Color column headers by status
+
+  # --- Settings: estimates --------------------------------------------
+  label_expert_agile_estimate_units: Estimation unit
+  label_expert_agile_estimate_units_hours: Hours
+  label_expert_agile_estimate_units_story_points: Story points
+  label_expert_agile_story_points_on: Enable story points
+  label_expert_agile_trackers_for_sp: Trackers using story points
+  text_expert_agile_trackers_for_sp: Select none to enable story points for every tracker
+  label_expert_agile_sp_values: Story point values
+  text_expert_agile_sp_values: Comma separated values offered in the story point selector
+  label_expert_agile_epic_trackers: Epic trackers
+  text_expert_agile_epic_trackers: Issues of these trackers are epics; an issue belongs to the nearest epic above it in the subtask tree. Select none to switch epics off
+
+  # --- Settings: sprints ----------------------------------------------
+  label_expert_agile_sprints_on: Enable sprints
+  label_expert_agile_allow_overlapping_sprints: Allow overlapping sprints
+
+  # --- Settings: charts -----------------------------------------------
+  label_expert_agile_default_chart: Default chart
+  label_expert_agile_exclude_weekends: Exclude weekends from the ideal line
+  label_expert_agile_hide_closed_issues_data: Hide closed issues in chart data
+  label_expert_agile_chart_future_data: Show future data on charts
+  label_expert_agile_chart_items_limit: Chart item limit
+  text_expert_agile_chart_items_limit: Charts that replay issue history refuse to render above this many issues
+  label_expert_agile_chart_cache_minutes: Chart cache duration (minutes)
+  text_expert_agile_chart_cache_minutes: Computed chart series are cached for this long; 0 disables caching
+
+  # --- Story points ---------------------------------------------------
+  field_story_points: Story points
+  label_expert_agile_story_points: Story points
+  label_expert_agile_total_story_points: Total story points
+
+  # --- Sprints --------------------------------------------------------
+  field_sprint: Sprint
+  label_expert_agile_sprint: Sprint
+  label_expert_agile_sprint_plural: Sprints
+  label_expert_agile_sprint_new: New sprint
+  label_expert_agile_sprint_status_open: Open
+  label_expert_agile_sprint_status_active: Active
+  label_expert_agile_sprint_status_closed: Closed
+  label_expert_agile_sprint_all_issues: All issues
+  label_expert_agile_sprint_active_mode: Active sprint (follows automatically)
+  label_expert_agile_sprint_complete: "Complete sprint"
+  button_expert_agile_sprint_complete: "Complete sprint"
+  label_expert_agile_sprint_complete_target: "Move the open issues to"
+  label_expert_agile_sprint_complete_next: "the next sprint, %{sprint}"
+  label_expert_agile_sprint_complete_backlog: "the backlog (no sprint)"
+  label_expert_agile_sprint_complete_new: "a new sprint"
+  label_expert_agile_sprint_complete_activate: "Make the target sprint the active one"
+  text_expert_agile_sprint_complete_activate: "So a board following the active sprint shows it right away. Ignored when the issues go to the backlog."
+  text_expert_agile_sprint_complete_summary: "%{closed} issues done, %{open} still open (%{points} story points)."
+  text_expert_agile_sprint_complete_refused: "Nothing was changed. These issues could not be moved:"
+  label_expert_agile_hidden_issues: "Issues you cannot see"
+  notice_expert_agile_sprint_completed: "%{sprint} is closed; %{count} open issues moved to %{target}."
+  error_expert_agile_sprint_complete_target: "Choose an open sprint the project may plan into, the backlog, or a new sprint"
+  error_expert_agile_sprint_complete_issue_hidden: "not visible to you"
+  error_expert_agile_sprint_already_closed: "This sprint is already closed"
+  error_expert_agile_sprint_complete_activate_foreign: "Only someone who may manage sprints in the target sprint's project can make it the active one"
+  error_expert_agile_sprint_complete_gone: "This sprint no longer exists"
+  label_expert_agile_sprint_unavailable: (sprint not available)
+  label_expert_agile_sprint_sharing_none: Not shared
+  label_expert_agile_sprint_sharing_descendants: With subprojects
+  label_expert_agile_sprint_sharing_hierarchy: With project hierarchy
+  label_expert_agile_sprint_sharing_tree: With project tree
+  label_expert_agile_sprint_sharing_system: With all projects
+  error_expert_agile_sprint_dates_order: End date must not be before the start date
+  error_expert_agile_sprint_dates_overlap: Overlaps another sprint in this project
+  error_expert_agile_sprint_has_open_issues: Cannot be closed while it still has open issues
+  error_expert_agile_sprint_used_by_other_projects: Cannot be deleted while issues of other projects are planned into it
+
+  # --- Board ----------------------------------------------------------
+  label_expert_agile_wip_limit: WIP limit
+  text_expert_agile_wip_limit_exceeded: The WIP limit for this column is exceeded
+  error_expert_agile_status_transition_not_allowed: "The workflow does not allow a %{tracker} to change from %{from} to %{to}"
+  text_expert_agile_transitions_allowed: "Open from %{from}: %{statuses}"
+  text_expert_agile_transitions_none: "No status change is open to you from %{from}"
+  label_expert_agile_edit_workflow: Edit this tracker's workflow
+  error_expert_agile_move_failed: The move could not be saved
+  error_expert_agile_move_not_permitted: You are not allowed to move cards on this board
+  error_expert_agile_move_not_permitted_in_project: "You are not allowed to move cards of the project %{project}. Check its agile module and permissions"
+  error_expert_agile_session_expired: Your session has expired. Reload the page and sign in again
+  error_expert_agile_move_target_gone: This card, or the board it was moved on, no longer exists. Reload the page
+  error_expert_agile_move_failed_unexpectedly: The move failed unexpectedly. The details are in the server log
+  error_expert_agile_move_saved_but_not_shown: The move was saved, but the board could not be updated. Reload the page
+  error_expert_agile_issue_not_editable: You are not allowed to edit this issue
+  error_expert_agile_version_not_editable: You are not allowed to change the target version of this issue
+  error_expert_agile_sprint_not_editable: You are not allowed to change the sprint of this issue
+  error_expert_agile_status_not_editable: You are not allowed to change the status of this issue
+  error_expert_agile_status_not_kept: "The status change to %{to} was not saved: the issue is still %{status}. Another rule or plugin kept it"
+  error_expert_agile_swimlane_not_writable: "A card cannot be moved into another %{field} lane"
+  error_expert_agile_swimlane_field_not_editable: "You are not allowed to change the field %{field} of this issue"
+  error_expert_agile_swimlane_not_kept: "The change of %{field} was not saved. Another rule or plugin kept the old value"
+  error_expert_agile_epic_lane_subtask: "An issue that is a subtask of a story belongs to its epic through the story. Move the story instead"
+  error_expert_agile_epic_lane_epic: "An epic cannot be dropped into another epic. Change its parent in the issue form"
+  error_expert_agile_epic_lane_not_an_epic: "The lane the card was dropped into is not an epic"
+  error_expert_agile_move_saved_lane_not_shown: The move was saved. The card now belongs to a lane that is not on the board. Reload the page to see it
+  text_expert_agile_drop_allowed: This card may be dropped here
+  text_expert_agile_drop_blocked: The workflow does not allow this card here
+  label_expert_agile_swimlane_none: No swimlanes
+  label_expert_agile_swimlane_none_value: (none)
+  label_expert_agile_board_truncated: Only the first %{count} issues are shown
+  label_expert_agile_card_fields: Card fields
+  label_expert_agile_appearance: Appearance
+  label_expert_agile_day_in_state: Time in status
+  label_expert_agile_epic: Epic
+  label_expert_agile_epic_plural: Epics
+  label_expert_agile_epic_progress: Progress
+  label_expert_agile_epic_progress_issues: "Issues done: %{closed}/%{total}"
+  label_expert_agile_epic_progress_points: "Story points done: %{closed}/%{total}"
+  label_expert_agile_subtasks: Subtasks
+  label_expert_agile_subtasks_done: "Subtasks done: %{closed}/%{total}"
+  label_expert_agile_story_arrow: "↳"
+  label_expert_agile_epics_show_closed: "Show closed epics (%{count})"
+  label_expert_agile_epics_hide_closed: Hide closed epics
+  text_expert_agile_epic_empty: Nothing planned into this epic yet.
+  text_expert_agile_no_epics: No open epics yet. Create an issue of an epic tracker to plan into it.
+  error_expert_agile_epic_not_editable: You are not allowed to change the parent of this issue
+  label_expert_agile_today: today
+  label_expert_agile_days_count: "%{count} d"
+  label_expert_agile_card_text_fields: Text fields
+  label_expert_agile_card_description_length: Description excerpt length
+  text_expert_agile_card_description_length: Characters of the description shown on a card when that field is switched on
+  label_expert_agile_swimlanes: Swimlanes
+  label_expert_agile_show_avatar: Show assignee avatar
+  label_expert_agile_hide_epics: Hide epics on the board
+  label_expert_agile_columns_and_limits: Columns and WIP limits
+  label_expert_agile_wip_min: Min
+  label_expert_agile_wip_max: Max
+  text_expert_agile_board_statuses_hint: Tick the statuses to show as board columns. With none ticked the board shows every open status of this project's workflows.
+  error_expert_agile_board_not_saveable: You are not allowed to save a board of this visibility
+
+  # --- Backlog --------------------------------------------------------
+  error_expert_agile_container_not_available: This sprint or version is not available for this project
+  text_expert_agile_no_sprints: No sprints yet. Create one to start planning.
+  text_expert_agile_no_versions: This project has no open versions to plan into.
+  text_expert_agile_drop_issues_here: Drag issues here to plan them
+  label_expert_agile_days_remaining: "%{count} d left"
+
+  # --- Charts ---------------------------------------------------------
+  label_expert_agile_chart_burndown: Burndown
+  label_expert_agile_chart_burnup: Burnup
+  label_expert_agile_chart_velocity: Velocity
+  label_expert_agile_chart_cumulative_flow: Cumulative flow
+  label_expert_agile_chart_cycle_time: Cycle time
+  label_expert_agile_chart_unit_issues: Issues
+  label_expert_agile_chart_unit_hours: Hours
+  label_expert_agile_chart_unit_story_points: Story points
+  text_expert_agile_chart_too_many_items: Too many issues to compute this chart; narrow the filters
+  label_expert_agile_chart_remaining: Remaining
+  label_expert_agile_chart_ideal: Ideal
+  label_expert_agile_chart_completed: Completed
+  label_expert_agile_chart_scope: Scope
+  label_expert_agile_chart_closed: Closed
+  label_expert_agile_chart_days: Days
+  label_expert_agile_chart_moving_average: Moving average
+  label_expert_agile_chart_interval: Interval
+  label_expert_agile_chart_interval_day: Day
+  label_expert_agile_chart_interval_week: Week
+  label_expert_agile_chart_interval_month: Month
+  label_expert_agile_chart_date_from: From
+  label_expert_agile_chart_date_to: To
+
+  # --- Colors ---------------------------------------------------------
+  label_expert_agile_colors: Agile card colors
+  label_expert_agile_manage_colors: Manage card colors
+  text_expert_agile_manage_colors: Opens a separate screen; save this form first
+  label_expert_agile_color: Color
+  label_expert_agile_color_clear: No color
+  label_expert_agile_color_a11y_open: Open color picker
+  label_expert_agile_color_a11y_marker: 'Saturation: {s}. Brightness: {v}.'
+  label_expert_agile_color_a11y_hue: Hue slider
+  label_expert_agile_color_a11y_alpha: Opacity slider
+  label_expert_agile_color_a11y_input: Color value field
+  label_expert_agile_color_a11y_format: Color format
+  label_expert_agile_color_a11y_swatch: Color swatch
+  label_expert_agile_color_a11y_instruction: Saturation and brightness selector. Use up, down, left and right arrow keys to select.
+  error_expert_agile_color_invalid: 'Not a color, left unchanged: %{names}. Use a hex value such as #3d7ec4.'
+  label_expert_agile_color_base_issue_status: Status
+  label_expert_agile_color_base_issue_priority: Priority

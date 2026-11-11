@@ -1,0 +1,447 @@
+require File.expand_path('../../test_helper', __FILE__)
+
+class ExpertAgileSprintTest < ActiveSupport::TestCase
+  fixtures :projects, :users, :members, :member_roles, :roles,
+           :enabled_modules, :trackers, :projects_trackers, :issue_statuses,
+           :enumerations, :issues
+
+  def setup
+    @project = Project.find(1)
+    User.current = User.find(1)
+  end
+
+  def teardown
+    User.current = nil
+    ExpertAgileData.delete_all
+    ExpertAgileSprint.delete_all
+  end
+
+  def build_sprint(attributes = {})
+    ExpertAgileSprint.new({
+      :project => @project,
+      :name => 'Sprint 1',
+      :start_date => Date.new(2026, 1, 1),
+      :end_date => Date.new(2026, 1, 14)
+    }.merge(attributes))
+  end
+
+  # --- Validations ------------------------------------------------------
+
+  def test_requires_name_and_dates
+    sprint = ExpertAgileSprint.new(:project => @project)
+
+    assert_not sprint.valid?
+    assert sprint.errors[:name].any?
+    assert sprint.errors[:start_date].any?
+    assert sprint.errors[:end_date].any?
+  end
+
+  def test_end_date_must_not_precede_start_date
+    sprint = build_sprint(:end_date => Date.new(2025, 12, 1))
+
+    assert_not sprint.valid?
+    assert sprint.errors[:end_date].any?
+  end
+
+  def test_end_date_may_equal_start_date
+    assert build_sprint(:end_date => Date.new(2026, 1, 1)).valid?
+  end
+
+  def test_name_is_unique_per_project
+    build_sprint.save!
+    duplicate = build_sprint(:start_date => Date.new(2026, 3, 1), :end_date => Date.new(2026, 3, 14))
+
+    assert_not duplicate.valid?
+    assert duplicate.errors[:name].any?
+  end
+
+  def test_same_name_is_allowed_in_another_project
+    build_sprint.save!
+    other = build_sprint(:project => Project.find(2))
+
+    assert other.valid?, other.errors.full_messages.join(', ')
+  end
+
+  def test_overlapping_sprints_are_rejected
+    build_sprint.save!
+    overlapping = build_sprint(:name => 'Sprint 2',
+                               :start_date => Date.new(2026, 1, 10),
+                               :end_date => Date.new(2026, 1, 24))
+
+    assert_not overlapping.valid?
+    assert overlapping.errors[:base].any?
+  end
+
+  def test_adjacent_sprints_are_allowed
+    build_sprint.save!
+    adjacent = build_sprint(:name => 'Sprint 2',
+                            :start_date => Date.new(2026, 1, 15),
+                            :end_date => Date.new(2026, 1, 28))
+
+    assert adjacent.valid?, adjacent.errors.full_messages.join(', ')
+  end
+
+  def test_overlap_can_be_allowed_by_setting
+    build_sprint.save!
+    with_agile_settings('allow_overlapping_sprints' => '1') do
+      overlapping = build_sprint(:name => 'Sprint 2',
+                                 :start_date => Date.new(2026, 1, 10),
+                                 :end_date => Date.new(2026, 1, 24))
+
+      assert overlapping.valid?, overlapping.errors.full_messages.join(', ')
+    end
+  end
+
+  def test_a_sprint_does_not_overlap_itself
+    sprint = build_sprint
+    sprint.save!
+    sprint.name = 'Renamed'
+
+    assert sprint.valid?, sprint.errors.full_messages.join(', ')
+  end
+
+  def test_cannot_close_a_sprint_with_open_issues
+    sprint = build_sprint
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+    ExpertAgileData.create!(:issue_id => issue.id, :sprint_id => sprint.id)
+
+    sprint.status = ExpertAgileSprint::STATUS_CLOSED
+
+    assert_not sprint.valid?
+    assert sprint.errors[:base].any?
+  end
+
+  def test_can_close_a_sprint_once_its_issues_are_closed
+    sprint = build_sprint
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+    ExpertAgileData.create!(:issue_id => issue.id, :sprint_id => sprint.id)
+    issue.status = IssueStatus.where(:is_closed => true).first
+    issue.save!
+
+    sprint.status = ExpertAgileSprint::STATUS_CLOSED
+
+    assert sprint.valid?, sprint.errors.full_messages.join(', ')
+  end
+
+  # --- Lifecycle --------------------------------------------------------
+
+  def test_activating_a_sprint_stands_the_others_down
+    first = build_sprint(:status => ExpertAgileSprint::STATUS_ACTIVE)
+    first.save!
+    second = build_sprint(:name => 'Sprint 2',
+                          :start_date => Date.new(2026, 2, 1), :end_date => Date.new(2026, 2, 14),
+                          :status => ExpertAgileSprint::STATUS_ACTIVE)
+    second.save!
+
+    assert_equal ExpertAgileSprint::STATUS_OPEN, first.reload.status
+    assert_equal ExpertAgileSprint::STATUS_ACTIVE, second.reload.status
+    assert_equal second, @project.reload.active_expert_agile_sprint
+  end
+
+  def test_length_and_remaining_days
+    sprint = build_sprint
+
+    assert_equal 14, sprint.length
+    assert_equal 0, sprint.remaining_days(Date.new(2026, 2, 1)), 'never negative'
+    assert_equal 4, sprint.remaining_days(Date.new(2026, 1, 10))
+  end
+
+  def test_destroying_a_sprint_unassigns_its_issues_without_deleting_them
+    sprint = build_sprint
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+    ExpertAgileData.create!(:issue_id => issue.id, :sprint_id => sprint.id)
+
+    sprint.destroy
+
+    assert Issue.exists?(issue.id), 'the issue survives its sprint'
+    assert_nil ExpertAgileData.find_by(:issue_id => issue.id).sprint_id
+  end
+
+  # --- Sharing ----------------------------------------------------------
+
+  def test_unshared_sprint_belongs_to_its_project_only
+    sprint = build_sprint
+    sprint.save!
+
+    assert sprint.shared_with?(@project)
+    assert_not sprint.shared_with?(Project.find(2))
+    assert_includes @project.shared_expert_agile_sprints, sprint
+    assert_not_includes Project.find(2).shared_expert_agile_sprints, sprint
+  end
+
+  def test_system_shared_sprint_reaches_every_project
+    sprint = build_sprint(:sharing => ExpertAgileSprint::SHARING_SYSTEM)
+    sprint.save!
+
+    assert sprint.shared_with?(Project.find(2))
+    assert_includes Project.find(2).shared_expert_agile_sprints, sprint
+  end
+
+  def test_descendant_shared_sprint_reaches_subprojects_only
+    parent = Project.find(1)
+    child = Project.find(3) # subproject of 1 in the fixtures
+    assert_equal parent.id, child.parent_id, 'fixture assumption: project 3 is a child of 1'
+
+    sprint = build_sprint(:project => parent, :sharing => ExpertAgileSprint::SHARING_DESCENDANTS)
+    sprint.save!
+
+    assert sprint.shared_with?(child)
+    assert_includes child.shared_expert_agile_sprints, sprint
+    assert_not_includes Project.find(2).shared_expert_agile_sprints, sprint
+  end
+
+  def test_sharing_is_symmetric_between_both_directions
+    # shared_projects (sprint -> projects) and shared_expert_agile_sprints
+    # (project -> sprints) are two separate queries; they must agree.
+    sprint = build_sprint(:sharing => ExpertAgileSprint::SHARING_TREE)
+    sprint.save!
+
+    sprint.shared_projects.each do |project|
+      assert_includes project.shared_expert_agile_sprints, sprint,
+                      "#{project.identifier} is in shared_projects but not the inverse"
+    end
+  end
+
+  # --- Scopes -----------------------------------------------------------
+
+  def test_sorted_puts_active_first_then_open_then_closed
+    open_sprint = build_sprint(:name => 'Open', :status => ExpertAgileSprint::STATUS_OPEN)
+    open_sprint.save!
+    active = build_sprint(:name => 'Active', :status => ExpertAgileSprint::STATUS_ACTIVE,
+                          :start_date => Date.new(2026, 2, 1), :end_date => Date.new(2026, 2, 14))
+    active.save!
+    closed = build_sprint(:name => 'Closed', :status => ExpertAgileSprint::STATUS_CLOSED,
+                          :start_date => Date.new(2025, 1, 1), :end_date => Date.new(2025, 1, 14))
+    closed.save!
+
+    assert_equal %w(Active Open Closed), ExpertAgileSprint.sorted.map(&:name)
+  end
+
+  def test_available_excludes_closed_sprints
+    build_sprint(:name => 'Open').save!
+    build_sprint(:name => 'Closed', :status => ExpertAgileSprint::STATUS_CLOSED,
+                 :start_date => Date.new(2025, 1, 1), :end_date => Date.new(2025, 1, 14)).save!
+
+    assert_equal ['Open'], ExpertAgileSprint.available.map(&:name)
+  end
+
+  # --- Journalling ------------------------------------------------------
+
+  def test_sprint_change_is_recorded_in_the_issue_journal
+    # The sprint lives on expert_agile_data, so without this it would change
+    # silently and never appear in the issue history.
+    sprint = build_sprint
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+
+    issue.init_journal(User.current, 'Planning')
+    issue.expert_agile_data!.sprint_id = sprint.id
+    issue.save!
+
+    detail = issue.reload.journals.last.details.detect { |d| d.prop_key == 'expert_agile_sprint_id' }
+    assert_not_nil detail, 'the sprint change must be journalled'
+    assert_equal sprint.id.to_s, detail.value.to_s
+  end
+
+  # --- Which sprints an issue may be planned into ------------------------
+
+  def test_an_issue_may_be_planned_into_a_sprint_of_its_own_project
+    sprint = build_sprint
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+
+    issue.expert_agile_data!.sprint_id = sprint.id
+
+    assert issue.save, issue.errors.full_messages.join(', ')
+    assert_equal sprint.id, issue.reload.expert_agile_data.sprint_id
+  end
+
+  def test_an_issue_may_be_planned_into_a_sprint_shared_with_its_project
+    sprint = build_sprint(:project => Project.find(2), :sharing => ExpertAgileSprint::SHARING_SYSTEM)
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+
+    issue.expert_agile_data!.sprint_id = sprint.id
+
+    assert issue.save, issue.errors.full_messages.join(', ')
+  end
+
+  # The issue form, bulk edit and the issue REST API write sprint_id through
+  # nested attributes, which no plugin controller sees. The model is therefore
+  # the only place a sprint of an unrelated project can be refused.
+  def test_an_issue_cannot_be_planned_into_a_sprint_of_an_unrelated_project
+    @project.enable_module!(:expert_agile_backlog) # so the setter may plan at all
+    foreign = build_sprint(:project => Project.find(2))
+    foreign.save!
+    issue = Issue.generate!(:project_id => @project.id)
+
+    issue.safe_attributes = { 'expert_agile_data_attributes' => { 'sprint_id' => foreign.id.to_s } }
+
+    assert_not issue.save
+    assert_nil ExpertAgileData.find_by(:issue_id => issue.id)
+  end
+
+  def test_a_sprint_that_stopped_being_shared_does_not_block_other_changes
+    sprint = build_sprint(:project => Project.find(2), :sharing => ExpertAgileSprint::SHARING_SYSTEM)
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+    issue.expert_agile_data!.sprint_id = sprint.id
+    issue.save!
+    sprint.update!(:sharing => ExpertAgileSprint::SHARING_NONE)
+
+    issue.reload.expert_agile_data.story_points = 3
+
+    assert issue.save, issue.errors.full_messages.join(', ')
+  end
+
+  def test_a_sprint_can_always_be_cleared
+    foreign = build_sprint(:project => Project.find(2))
+    foreign.save!
+    issue = Issue.generate!(:project_id => @project.id)
+    # Written before the validation existed.
+    ExpertAgileData.new(:issue => issue, :sprint_id => foreign.id).save!(:validate => false)
+
+    issue.reload.expert_agile_data.sprint_id = nil
+
+    assert issue.save, issue.errors.full_messages.join(', ')
+  end
+
+  # --- Moving an issue, archived projects, bounds ----------------------
+
+  # Core clears a version the new project cannot use when an issue moves; the
+  # sprint has to follow, or the issue sits in a sprint its project never
+  # shares, invisible to that sprint's backlog and blocking it from closing.
+  def test_moving_an_issue_drops_a_sprint_its_new_project_cannot_use
+    sprint = build_sprint
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+    issue.expert_agile_data!.sprint_id = sprint.id
+    issue.save!
+
+    issue.reload
+    issue.init_journal(User.current)
+    issue.project = Project.find(2)
+    assert issue.save, issue.errors.full_messages.join(', ')
+
+    assert_nil issue.reload.expert_agile_data.sprint_id
+    detail = JournalDetail.where(:prop_key => 'expert_agile_sprint_id').order(:id).last
+    assert_equal sprint.id.to_s, detail.old_value, 'the history says the sprint was dropped'
+  end
+
+  def test_moving_an_issue_keeps_a_sprint_shared_with_its_new_project
+    sprint = build_sprint(:sharing => ExpertAgileSprint::SHARING_SYSTEM)
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+    issue.expert_agile_data!.sprint_id = sprint.id
+    issue.save!
+
+    issue.reload.project = Project.find(2)
+    issue.save!
+
+    assert_equal sprint.id, issue.reload.expert_agile_data.sprint_id
+  end
+
+  # As core's shared_versions: an archived project shares nothing.
+  def test_an_archived_projects_sprints_are_not_shared
+    other = Project.find(2)
+    sprint = build_sprint(:project => other, :sharing => ExpertAgileSprint::SHARING_SYSTEM)
+    sprint.save!
+    assert_includes @project.shared_expert_agile_sprints.to_a, sprint
+
+    other.update_column(:status, Project::STATUS_ARCHIVED)
+
+    assert_not_includes @project.shared_expert_agile_sprints.to_a, sprint
+    assert_not sprint.reload.shared_with?(@project),
+               'shared_with? must agree with shared_expert_agile_sprints'
+  end
+
+  # The column is a 4-byte integer; a larger value used to reach the database
+  # and fail there with a 500 instead of a validation error.
+  def test_story_points_beyond_the_column_are_a_validation_error
+    issue = Issue.generate!(:project_id => @project.id)
+    data = issue.expert_agile_data!
+    data.story_points = 2**31
+
+    assert_not data.valid?
+    assert data.errors[:story_points].any?
+  end
+
+  # A notification mail renders the same detail objects for its HTML and its
+  # text part. The label used to be substituted twice, and the second lookup
+  # cast the name "12 Sprint" to the id 12.
+  def test_the_history_label_survives_a_second_rendering
+    other = build_sprint(:name => 'Other', :start_date => Date.new(2026, 3, 1),
+                         :end_date => Date.new(2026, 3, 14))
+    other.save!
+    numbered = build_sprint(:name => "#{other.id} Sprint")
+    numbered.save!
+    issue = Issue.generate!(:project_id => @project.id)
+    journal = Journal.create!(:journalized => issue, :user => User.current)
+    detail = JournalDetail.new(:journal => journal, :property => 'attr',
+                               :prop_key => 'expert_agile_sprint_id', :value => numbered.id.to_s)
+
+    2.times { RedmineExpertAgile::Hooks.instance.helper_issues_show_detail_after_setting(:detail => detail) }
+
+    assert_equal numbered.name, detail.value
+  end
+
+  # --- Who may plan through the issue form ------------------------------
+
+  # The planner needs its planning permission; setting the sprint through the
+  # issue form, bulk edit or the issue REST API must need it as well.
+  def test_the_sprint_is_dropped_for_a_user_who_may_not_plan
+    @project.enable_module!(:expert_agile_backlog)
+    sprint = build_sprint
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+    editor = User.find(2) # may edit issues in project 1, no planning permission
+    Role.find(1).remove_permission!(:manage_expert_agile_backlog)
+    assert_not editor.allowed_to?(:manage_expert_agile_backlog, @project)
+
+    issue.send(:safe_attributes=, { 'expert_agile_data_attributes' => { 'sprint_id' => sprint.id.to_s,
+                                                                      'story_points' => '5' } }, editor)
+    issue.save!
+
+    assert_nil issue.reload.expert_agile_data.sprint_id
+    assert_equal 5, issue.story_points, 'story points follow the edit permission, not the planning one'
+  end
+
+  def test_the_sprint_is_kept_for_a_user_who_may_plan
+    @project.enable_module!(:expert_agile_backlog)
+    Role.find(1).add_permission!(:manage_expert_agile_backlog)
+    sprint = build_sprint
+    sprint.save!
+    issue = Issue.generate!(:project_id => @project.id)
+
+    issue.send(:safe_attributes=, { 'expert_agile_data_attributes' => { 'sprint_id' => sprint.id.to_s } }, User.find(2))
+    issue.save!
+
+    assert_equal sprint.id, issue.reload.expert_agile_data.sprint_id
+  end
+
+  # The nested hash used to reach every column of the agile row.
+  def test_the_nested_attributes_carry_only_the_form_fields
+    issue = Issue.generate!(:project_id => @project.id)
+
+    issue.send(:safe_attributes=, { 'expert_agile_data_attributes' => { 'story_points' => '3',
+                                                                      'position' => '1' } }, User.find(1))
+    issue.save!
+
+    assert_nil issue.reload.expert_agile_data.position, 'the board rank is not a form field'
+  end
+
+  def test_an_issue_cannot_be_planned_into_a_closed_sprint
+    closed = build_sprint(:status => ExpertAgileSprint::STATUS_CLOSED)
+    closed.save!
+    issue = Issue.generate!(:project_id => @project.id)
+
+    issue.expert_agile_data!.sprint_id = closed.id
+
+    assert_not issue.save
+    assert_nil ExpertAgileData.find_by(:issue_id => issue.id)
+  end
+end
+

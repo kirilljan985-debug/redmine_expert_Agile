@@ -1,0 +1,381 @@
+# redmine_expert_agile
+
+> 🇩🇪 Deutsche Version · [English version](README.md)
+
+Agile Boards fuer Redmine: ein Kanban-/Scrum-Board auf Basis des Redmine-eigenen
+Query-Systems, Story Points, Sprints mit Backlog-Planer und Diagramme.
+
+Benoetigt **Redmine 5.0 oder neuer**. Lizenziert unter der **GPL-2.0-or-later**
+(siehe [LICENSE](LICENSE)).
+
+## Inhalt
+
+- [Funktionen](#funktionen)
+- [Bildschirmfotos](#bildschirmfotos)
+- [REST-API](API.md)
+- [Sprachen](#sprachen)
+- [Installation](#installation)
+- [Konfiguration](#konfiguration)
+- [Berechtigungen](#berechtigungen)
+- [Entwicklung](#entwicklung)
+- [Lizenz](#lizenz)
+- [Komponenten von Drittanbietern](#komponenten-von-drittanbietern)
+
+## Funktionen
+
+- **Board** — Spalten aus Ticket-Status, Drag & Drop, Swimlanes, WIP-Limits (nur hinweisend),
+  konfigurierbare Kartenfelder, Unterspalten ueber ein gemeinsames Statusnamen-Praefix, eine
+  Backlog-Spalte und gespeicherte Boards. Boards sind Redmine-Queries — alle bekannten Filter,
+  Gruppierungen und Sichtbarkeitsregeln gelten unveraendert.
+- **Story Points** — pro Ticket gespeichert, als konfigurierbare Werteliste angeboten
+  (standardmaessig modifizierte Fibonacci-Reihe), auf ausgewaehlte Tracker begrenzbar, als
+  Spalte und Filter in der Ticketliste verfuegbar.
+- **Sprints** — eine eigenstaendige Entitaet mit Start- und Enddatum, Lebenszyklus
+  offen/aktiv/geschlossen und Freigabe ueber den Projektbaum wie bei Versionen.
+  Redmine-Versionen bleiben parallel zur Planung nutzbar. Ein Board laesst sich auf einen Sprint
+  eingrenzen oder folgt automatisch dem aktiven Sprint.
+- **Backlog-Planer** — Tickets in einer eigenen Planungsansicht per Drag & Drop Sprints oder
+  Versionen zuordnen, mit denselben Filtern, Kartenfeldern und gespeicherten Abfragen wie das
+  Board.
+- **Diagramme** — Burndown, Burnup, Velocity, kumulierter Fluss und Durchlaufzeit, wahlweise in
+  Tickets, Stunden oder Story Points.
+- **Farben** — Karten eingefaerbt nach Tracker, Prioritaet, Status, Bearbeiter, Projekt oder
+  aufgewendeter Zeit. Jede Farbe ist waehlbar, 18 Palettentoene stehen als Farbfelder bereit.
+- **REST-API** — Agile-Daten (Story Points, Sprint-Zuordnung) lesen *und* schreiben, dazu
+  Sprint-CRUD.
+
+### Entwurfsentscheidungen
+
+Einige bewusste Unterschiede zu vergleichbaren Plugins, weil sie die Korrektheit betreffen:
+
+- **Board-Positionen sind gebrochene Dezimalwerte und werden auf dem Server berechnet.** Ein Zug
+  uebertraegt nur die gezogene Karte und ihre beiden Nachbarn und schreibt eine Zeile. Wird
+  stattdessen die ganze Spalte im Browser neu durchnummeriert, zerstoeren gleichzeitige Zuege
+  zweier Benutzer die Reihenfolge — und Karten, die ausserhalb der geladenen Seite liegen,
+  werden stillschweigend mit umsortiert.
+- **Die Diagramm-Historie wird in einem Durchlauf** ueber eine einzige `journal_details`-Abfrage
+  rekonstruiert und zwischengespeichert, statt die Journale jedes Tickets pro Datum erneut zu
+  durchsuchen.
+- **Kein Inline-JavaScript.** Views liefern nur Markup; Daten erreichen den Browser ueber eine
+  JSON-Insel. Das Board funktioniert unter einer `script-src 'self'`-Content-Security-Policy.
+- **Kein globales Monkeypatching** von `ActiveRecord::Base` oder `ApplicationController`.
+
+## Bildschirmfotos
+
+Alle Bildschirmfotos zeigen ein Demo-Projekt mit synthetischen Daten, aufgebaut von
+`scripts/seed_screenshot_demo.rb`.
+
+### Board
+
+Die Spalten sind Ticketstatus, Karten werden zwischen ihnen verschoben. Status mit gemeinsamem
+Praefix — `Dev: Review` und `Dev: Test` — laufen unter einer gemeinsamen Ueberschrift zusammen,
+und eine Spalte oberhalb ihrer WIP-Grenze markiert sich selbst.
+
+Sobald eine Karte aufgenommen wird, markiert das Board jede Spalte: gruen, wohin der Workflow
+diese Karte laesst, schraffiert, wohin nicht. Die Antwort gilt pro Karte — Tracker, aktueller
+Status, Ihre Rollen, ob Sie Autor oder Bearbeiter sind, offene Unteraufgaben und blockierende
+Tickets zaehlen mit — und sie beruht auf derselben Pruefung, mit der der Server den Zug
+durchsetzt: eine als erlaubt markierte Spalte wird nie aus Workflow-Gruenden abgelehnt. Eine
+gesperrte Spalte nimmt die Karte gar nicht erst an, und ein abgebrochenes Ziehen legt die Karte
+dorthin zurueck, wo sie lag. Was der Workflow nicht im Voraus wissen kann, etwa ein im neuen
+Status verlangtes Pflichtfeld, wird weiterhin nach dem Ablegen abgelehnt — mit Begruendung.
+
+![Agile-Board mit fuenf Statusspalten: Zu erledigen, In Arbeit, eine gemeinsame Dev-Ueberschrift
+ueber den Unterspalten Review und Test sowie Fertig. Jede Spaltenueberschrift traegt ihre
+Kartenzahl und WIP-Grenze, Review ist hervorgehoben, weil dort fuenf Karten gegen eine Grenze von
+vier stehen, und die Karten zeigen Ticketnummer, Tracker, Epic-Badge, Titel, Bearbeiter, Story
+Points und Fortschritt; eine Story in Arbeit zaehlt ihre Unteraufgaben, und jede Unteraufgabe nennt
+ihre Story](docs/screenshots/de/01-board.png)
+
+Swimlanes gruppieren das Board nach einem Datensatz, zu dem die Tickets gehoeren: Projekt,
+Tracker, Status, Prioritaet, Autor, Bearbeiter, Kategorie oder Zielversion. Dasselbe Board laesst
+sich so nach Bearbeiter, Tracker oder Prioritaet lesen.
+
+Eine Karte in eine andere Swimlane zu ziehen setzt dieses Feld, fuer die vier, die ein Zug aendern
+darf: Bearbeiter (die Karte uebergeben), Prioritaet, Kategorie und Zielversion. Es ist dieselbe
+Aenderung wie im Ticketformular, mit denselben Regeln: das Recht, das Ticket zu bearbeiten, Felder,
+die der Workflow schreibgeschuetzt macht, und die Validierung des Tickets (eine Kategorie seines
+Projekts, eine Version, in die es geplant werden darf). Ein Zug, der Swimlane und Spalte zugleich
+wechselt, wird als eine Aenderung gespeichert oder als eine abgelehnt. Swimlanes nach Projekt,
+Tracker, Status oder Autor sind nur zum Lesen: andere Swimlanes sind beim Ziehen gesperrt.
+
+Ein Board traegt die Tickets seiner Unterprojekte, das globale Board (*Agile-Board* im
+Anwendungsmenue) traegt alles. Ob eine Karte
+gezogen werden darf, ist deshalb eine Frage an das Projekt der Karte, nicht an das Projekt, dessen
+Board angezeigt wird. Eine Karte aus einem Projekt, in dem Sie keine Karten verschieben duerfen,
+wird angezeigt, laesst sich aber nicht ziehen.
+
+Ein Board, das sich zu behalten lohnt, wird ueber das Optionsfeld gespeichert und ueber die
+Seitenleiste wieder geoeffnet. Beim Bearbeiten eines gespeicherten Boards oeffnet sich dasselbe
+Optionsfeld, mit dem es angelegt wurde: Filter, Kartenfelder, Swimlanes, Einfaerbung,
+Statusspalten und WIP-Grenzen lassen sich alle aendern. "Bearbeiten" nimmt ausserdem mit, was
+gerade angewandt ist — das Board oeffnet sich also so, wie es auf dem Bildschirm steht, und nicht
+so, wie es zuletzt gespeichert wurde.
+
+![Dasselbe Board, in Swimlanes nach Bearbeiter gruppiert: ein beschriftetes Band je Teammitglied
+plus ein Band fuer nicht zugewiesene Tickets, jedes ueber alle fuenf Statusspalten](docs/screenshots/de/02-board-swimlanes.png)
+
+### Story Points
+
+Story Points sind eine Spalte der plugineigenen Tabelle, kein benutzerdefiniertes Feld. Das
+Ticketformular bietet sie als feste Skala an, direkt neben dem Sprint des Tickets.
+
+![Ticketformular mit Redmines eigenen Attributfeldern und darunter zwei Feldern des Plugins: ein
+Auswahlfeld Story Points mit dem Wert 2 und ein Auswahlfeld Sprint mit Sprint 24](docs/screenshots/de/05-story-points.png)
+
+### Epics
+
+Epics buendeln Stories wie in Jira, auf Grundlage von Redmines eigenem Unteraufgaben-Baum. In den
+Plugin-Einstellungen (*Epics*) werden die Epic-Tracker gewaehlt; ein Ticket gehoert dann zum
+naechsten Epic ueber ihm. Die Stories eines Epics sind also seine Unteraufgaben, und deren
+Unteraufgaben gehoeren ebenfalls dazu. Mit dem Kartenfeld **Epic** zeigt jede Karte auf dem Board
+und im Backlog ihr Epic als farbiges Badge, eine Farbe je Epic. Die Epics selbst stehen nicht auf
+dem Board, solange *Epics auf dem Board ausblenden* in den Board-Optionen eingeschaltet ist. Wird das Board nach *Epic* gruppiert, entsteht eine Swimlane je Epic; eine Story in die Lane
+eines anderen Epics zu ziehen verschiebt sie dorthin. Im Backlog-Planer plant *Epics* Stories auf dieselbe Weise in Epics.
+Jede Epic-Lane und die Ticketseite des Epics zeigen seinen Fortschritt. Das Kartenfeld *Unteraufgaben* klappt die Unteraufgaben einer Story auf
+ihrer Karte auf, und der Reiter *Epics* zeigt jedes Epic mit Stories und Unteraufgaben als Baum.
+
+![Sprint-Board nach Epic gruppiert: eine Swimlane je Epic mit dem Fortschrittsbalken des Epics im
+Kopf und eine letzte Lane fuer Tickets ohne Epic. Eine Story in Arbeit zeigt "Erledigte
+Unteraufgaben: 1/3", ihre Unteraufgaben stehen in ihren eigenen Spalten](docs/screenshots/de/12-board-epics.png)
+
+![Reiter Epics: jedes Epic mit Status, Fortschrittsbalken und erledigten Tickets und Story Points
+ueber einer Tabelle seiner Stories; die Unteraufgaben einer Story stehen eingerueckt darunter](docs/screenshots/de/13-epics.png)
+
+![Backlog-Planer im Reiter Epics: Stories ohne Epic links, daneben eine Lane je offenem Epic mit
+Ticketzahl, Story-Point-Summe und Fortschritt im Kopf; jede Karte traegt ihr
+Epic-Badge](docs/screenshots/de/14-backlog-epics.png)
+
+### Sprints
+
+Sprints sind datierte Behaelter mit eigenem Lebenszyklus — offen, aktiv, abgeschlossen —, die in
+den Projekteinstellungen verwaltet werden. Ein Projekt fuehrt genau einen aktiven Sprint.
+
+![Reiter Sprints in den Projekteinstellungen mit fuenf Sprints samt Status, Start- und Enddatum:
+einer aktiv, einer offen und drei abgeschlossen](docs/screenshots/de/04-sprints.png)
+
+Zum Sprint-Board wird ein Board ueber die Auswahl **Sprint** in seinen Optionen: entweder ein
+bestimmter Sprint oder *Aktiver Sprint (automatisch)*, der dem jeweils laufenden Sprint folgt, sodass
+ein gespeichertes Sprint-Board zu Beginn der naechsten Iteration nicht umgestellt werden muss.
+Spalten, Zaehler und Summen umfassen dann nur die Tickets dieses Sprints. Das funktioniert auch
+per Link — `…/expert_agile/board?set_filter=1&sprint_id=41` oder `sprint_id=active`. Angenommen
+werden nur Sprints, in die das Projekt planen darf; jede andere ID, oder *Aktiver Sprint* ohne
+laufenden Sprint, zeigt ein leeres Board statt aller Tickets.
+
+![Geoeffnete Board-Optionen ueber dem Sprint-Board: Kartenfelder, Darstellung mit der
+Sprint-Auswahl "Aktiver Sprint (automatisch)" und die Statusspalten mit ihren
+WIP-Limits](docs/screenshots/de/11-sprint-board.png)
+
+Auch die Ticketliste kennt den Sprint: ein Filter **Sprint** (ein Sprint, *Aktiver Sprint*,
+irgendeiner oder keiner) und eine Spalte **Sprint**, die sortiert, gruppiert und in den CSV-Export geht.
+
+![Redmines Ticketliste, gefiltert auf offene Stories im aktiven und im naechsten Sprint, nach der
+Spalte Sprint in Sprint 24 und Sprint 25 gruppiert, mit einer Spalte Story Points](docs/screenshots/de/16-issue-list-sprint.png)
+
+Am Ende einer Iteration verschiebt **Sprint abschliessen** (Sprint-Liste oder Sprint-Lane im
+Planer) die offenen Tickets in den naechsten Sprint, ins Backlog oder in einen neuen Sprint, schliesst
+den Sprint und kann das Ziel zum aktiven Sprint machen — in einem Schritt.
+
+![Seite Sprint abschliessen: wie viele Tickets erledigt und noch offen sind samt Story Points, die
+offenen Tickets als Liste und die Wahl zwischen naechstem Sprint, Backlog oder einem neuen Sprint
+mit vorgeschlagenem Namen und Datum, dazu "Ziel-Sprint zum aktiven Sprint machen"](docs/screenshots/de/15-sprint-complete.png)
+
+### Backlog-Planer
+
+Der Planer stellt den ungeplanten Backlog neben die Sprints, in die er gezogen werden kann; jede
+Bahn summiert Ticketzahl und Story Points. Ein zweiter Reiter plant stattdessen in
+Redmine-Versionen.
+
+Er traegt dasselbe Filter- und Optionsfeld wie das Board: Redmines eigenes Filterwerkzeug, die
+Kartenfelder und die Einfaerbung sowie Anwenden / Zuruecksetzen / Speichern. Das Angewandte bleibt
+in der Sitzung erhalten, der Rueckweg zum Planer zeigt ihn also so, wie er verlassen wurde, und ein
+Planer, der sich lohnt, laesst sich speichern und aus der Seitenleiste wieder oeffnen. Spalten und
+WIP-Grenzen gibt es hier nicht — der Planer ignoriert, wo ein Ticket im Workflow steht, denn ein
+Ticket ist geplant oder nicht.
+
+![Backlog-Planer mit den Reitern Sprints und Versionen: links eine Backlog-Bahn, daneben je eine
+Bahn pro verfuegbarem Sprint, jede mit Ticketzahl, Story-Point-Summe, Zeitraum und Restlaufzeit in
+der Kopfzeile](docs/screenshots/de/03-backlog.png)
+
+### Diagramme
+
+Burndown und Burnup rekonstruieren den Ticketverlauf aus den Journalen. Gemessene Linien enden am
+heutigen Tag, die Ideallinie laeuft bis zum Ende des Zeitraums.
+
+![Burndown-Diagramm ueber einen Sprint in Story Points: die Restlinie faellt von rund 165 Punkten
+und endet heute, darunter eine gestrichelte graue Ideallinie, die zum Sprintende auf null
+laeuft](docs/screenshots/de/06-chart-burndown.png)
+
+![Velocity-Diagramm als gruppierte Balken je Woche, das erstellte gegen abgeschlossene Tickets der
+letzten sechzig Tage stellt](docs/screenshots/de/07-chart-velocity.png)
+
+![Diagramm des kumulativen Flusses: sieben gestapelte Baender, eines je Ticketstatus, die ueber
+sechzig Tage von fuenf auf hundertfuenfundzwanzig Tickets anwachsen](docs/screenshots/de/08-chart-cumulative-flow.png)
+
+### Farben
+
+Karten beziehen ihre Farbe aus Tracker, Status, Prioritaet, Bearbeiter, Projekt oder dem
+Verhaeltnis von geschaetztem zu gebuchtem Aufwand — also daraus, was ein Ticket ist, nie aus
+einer Farbe am einzelnen Ticket. Die Zuordnung wird zentral verwaltet.
+
+Gewaehlt wird jede Farbe mit einem [Coloris](https://coloris.js.org/)-Farbwaehler: Farbflaeche,
+Farbton-Regler und Hex-Feld, dazu die 18 Palettentoene des Plugins als Farbfelder. Jede Farbe ist
+moeglich. Eine Karte zeigt sie als linken Rand und als blassen Farbton im Hintergrund; dieser
+bleibt bei jeder Wahl hell genug, dass der Kartentext lesbar bleibt. Was keine eigene Farbe hat
+(Bearbeiter sowie noch nicht eingefaerbte Tracker oder Status), bekommt weiterhin einen festen
+Palettenton.
+
+![Verwaltungsseite fuer Kartenfarben, Reiter Status: jeder Status neben einem Hex-Feld mit seiner
+Farbe, der Farbwaehler geoeffnet bei In Arbeit — Farbflaeche, Farbton-Regler, Hex-Wert und
+achtzehn Palettenfarben](docs/screenshots/de/09-card-colors.png)
+
+### Konfiguration
+
+![Plugin-Einstellungen mit sechs Abschnitten — Board, Farben, Schaetzungen, Epics, Sprints und
+Diagramme — mit den Standard-Kartenfeldern, dem Board-Limit, der Farbbasis, der Schaetzeinheit,
+der Story-Point-Skala, den Epic-Trackern, den Sprint-Schaltern und den Diagramm-Vorgaben](docs/screenshots/de/10-settings.png)
+
+Die REST-API hat keine eigene Oberflaeche — siehe [API.md](API.md).
+
+## Sprachen
+
+Die Oberflaeche gibt es auf Englisch, Deutsch, Spanisch, Franzoesisch, Italienisch und Portugiesisch
+(`en`, `de`, `es`, `fr`, `it`, `pt`, `pt-BR`). Redmine zeigt jedem Benutzer die Sprache aus seinem
+Konto oder die Standardsprache unter *Administration » Konfiguration » Anzeige*; fuer jede andere
+Sprache faellt es auf Englisch zurueck. Diese Dokumentation gibt es auf Englisch und Deutsch.
+
+Korrekturen von Muttersprachlern sind als Pull-Request auf `config/locales/<sprache>.yml`
+willkommen. `test/unit/locale_files_test.rb` prueft, dass jede Sprache jeden Schluessel aus `en.yml`
+hat, in derselben Reihenfolge und mit denselben `%{…}`-Platzhaltern.
+
+## Installation
+
+```bash
+cd /pfad/zu/redmine/plugins
+git clone https://github.com/expertZentrale/redmine_expert_agile.git
+cd /pfad/zu/redmine
+bundle exec rake redmine:plugins:migrate NAME=redmine_expert_agile RAILS_ENV=production
+```
+
+Redmine neu starten, danach das Modul **expert Agile** (und optional **expert Agile Backlog**)
+pro Projekt unter *Projekteinstellungen → Module* aktivieren.
+
+Alternativ ein Release-Archiv von der
+[Releases-Seite](https://github.com/expertZentrale/redmine_expert_agile/releases) herunterladen
+und nach `plugins/` entpacken.
+
+### Parallelbetrieb mit RedmineUP Agile
+
+Alle Klassen, Tabellen und Routen sind praefixiert, beide Plugins koennen also gleichzeitig
+installiert sein. Allerdings patchen beide `Issue#safe_attributes=`, `IssueQuery` und
+`ProjectsHelper#project_settings_tabs`, und RedmineUP verwendet dafuer `alias_method`-Paare —
+**beide Module im selben Projekt zu aktivieren wird nicht unterstuetzt.** Ein Projekt wird
+umgestellt, indem das eine Modul deaktiviert und das andere aktiviert wird.
+
+## Konfiguration
+
+*Administration → Plugins → Redmine expert Agile*. Die Einstellungen sind in Board, Farben,
+Schaetzungen, Sprints und Diagramme gegliedert. Jeder Schluessel hat einen Standardwert, eine
+frische Installation ist also sofort nutzbar.
+
+Zwei erwaehnenswerte:
+
+- **Maximale Tickets pro Board** (Standard 500) begrenzt, wie viele Tickets eine Board-Ansicht
+  laedt.
+- **Maximale Tickets pro Diagramm** (Standard 1000) und **Diagramm-Cache** (Standard 60 Minuten)
+  begrenzen den Aufwand jedes Diagramms. Ein Diagramm über mehr Tickets als die Grenze zeigt einen
+  Hinweis, statt gezeichnet zu werden.
+
+## Berechtigungen
+
+Pro Rolle unter *Administration → Rollen und Rechte* vergeben.
+
+| Modul | Berechtigung | Erlaubt |
+| --- | --- | --- |
+| expert Agile | Agile-Board ansehen | Board oeffnen, Karten lesen |
+| expert Agile | Agile-Board bearbeiten | Drag & Drop, Karten anlegen und bearbeiten |
+| expert Agile | Agile-Boards speichern | Private gespeicherte Boards anlegen |
+| expert Agile | Oeffentliche Agile-Boards verwalten | Oeffentliche Boards anlegen und bearbeiten |
+| expert Agile | Agile-Diagramme ansehen | Diagrammseite oeffnen |
+| expert Agile | Sprints verwalten | Sprints anlegen, bearbeiten und schliessen |
+| expert Agile Backlog | Backlog ansehen | Backlog-Planer oeffnen |
+| expert Agile Backlog | Backlog verwalten | Tickets Sprints und Versionen zuordnen, auch das Sprintfeld im Ticketformular |
+
+## Entwicklung
+
+Der vollstaendige Entwicklungsleitfaden steht in [CLAUDE.md](CLAUDE.md). Kurzfassung, aus dem
+Wurzelverzeichnis des uebergeordneten `redmine-expert`-Repositorys:
+
+```bash
+# Lokalen Stack starten (Redmine auf :3000)
+docker-compose -f docker-compose.yml up --build
+
+# Testsuite des Plugins ausfuehren. Der Pluginname muss als -e uebergeben werden:
+# eine Shell-Variable erreicht den Container nicht, und der Dienst testet dann
+# stillschweigend sein Standard-Plugin.
+docker-compose -f docker-compose.yml --profile test run --build --rm \
+  -e PLUGIN=redmine_expert_agile redmine-test
+```
+
+Innerhalb einer Redmine-Umgebung:
+
+```bash
+bundle exec rake redmine:plugins:test NAME=redmine_expert_agile RAILS_ENV=test
+```
+
+Zum Testen von Zuegen von Hand baut `scripts/seed_board_workflow_demo.rb` Projekte mit
+restriktiven, rollenabhaengigen Workflows (Uebergaenge nur fuer Autor oder Bearbeiter, eine Gruppe
+als Bearbeiter, schreibgeschuetzte und Pflichtfelder, ein nicht schliessbares Elternticket und ein
+blockiertes Ticket) sowie je ein gespeichertes Board pro Feld, das die Installation als Swimlane
+anbietet. Es laeuft auf dem wegwerfbaren Screenshot-Stack und gibt die Uebergangsmatrix aus, die
+jeder Demo-Benutzer sehen sollte; `scripts/teardown_board_workflow_demo.rb` entfernt alles wieder:
+
+```bash
+docker-compose -f docker-compose.screenshots.yml --profile seed run --build --rm \
+  -e DEMO_STACK=1 -e DEMO_PASSWORD=... redmine-seed \
+  rails runner plugins/redmine_expert_agile/scripts/seed_board_workflow_demo.rb
+```
+
+## Lizenz
+
+GPL-2.0-or-later. Dieses Plugin ist eine unabhaengige Implementierung und enthaelt keinen Code
+aus anderen Agile-Plugins.
+
+## Komponenten von Drittanbietern
+
+Das Plugin bringt die folgenden Komponenten unter deren eigenen Lizenzen mit. Die Lizenz-Header
+bleiben in den ausgelieferten Dateien erhalten.
+
+| Komponente | Version | Lizenz | Copyright | Pfad |
+|------------|---------|--------|-----------|------|
+| [Chart.js](https://www.chartjs.org) | 4.4.7 | MIT | © 2024 Chart.js Contributors | `assets/javascripts/chart.umd.min.js` |
+| [@kurkle/color](https://github.com/kurkle/color) | 0.3.2 | MIT | © 2023 Jukka Kurkela | in `assets/javascripts/chart.umd.min.js` enthalten |
+| [Coloris](https://coloris.js.org) | 0.25.0 | MIT | © 2021 Momo Bassit | `assets/javascripts/coloris.min.js`, `assets/stylesheets/coloris.min.css` |
+
+Sie werden lokal aus den Plugin-Assets ausgeliefert — zur Laufzeit erfolgt **kein** CDN-Aufruf.
+Chart.js wird nur auf der Diagrammseite geladen, Coloris nur auf der Seite der Farbeinstellungen.
+
+<details>
+<summary>MIT-Lizenz — gilt fuer alle drei Komponenten, jeweils mit ihrer Copyright-Zeile oben (Lizenztext im englischen Original)</summary>
+
+```text
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+</details>

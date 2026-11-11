@@ -1,0 +1,563 @@
+# A saved agile board.
+#
+# Subclasses IssueQuery rather than Query: every issue filter, every column,
+# `statement`, `project_statement` and the whole visibility model then come from
+# core unchanged.
+#
+# The board's own settings ride in the serialized `options` column, so a saved
+# board is one row in Redmine's `queries` table with no extra schema.
+class ExpertAgileQuery < IssueQuery
+  include RedmineExpertAgile::BoardGrid
+
+  # Reading a board only needs the agile permission; the inherited
+  # :view_issues check still applies to the issues themselves via Issue.visible.
+  self.view_permission = :view_expert_agile_board
+
+  # STI guard for our own listings. IssueQuery.visible would otherwise return
+  # agile boards too — see QueriesHelperPatch, which keeps them out of the
+  # issue list sidebar.
+  scope :only_boards, -> { where(:type => name) }
+
+  BOARD_TYPES = %w(kanban scrum).freeze
+
+  # Stored in place of a sprint id to follow the running sprint.
+  SPRINT_ACTIVE = 'active'.freeze
+
+  # Card fields we render ourselves and therefore never repeat in the generic
+  # attribute list at the bottom of a card.
+  SPECIAL_CARD_COLUMNS = %i(id project tracker status subject assigned_to done_ratio
+                            estimated_hours spent_hours story_points description epic subtasks).freeze
+
+  def initialize(attributes = nil, *args)
+    super
+    self.filters ||= { 'status_id' => { :operator => 'o', :values => [''] } }
+  end
+
+  # --- Options -------------------------------------------------------
+  #
+  # Thin typed accessors over the serialized hash, so callers never poke at
+  # `options[...]` directly and the stored shape stays in one place.
+
+  def board_type
+    value = options[:board_type].to_s
+    BOARD_TYPES.include?(value) ? value : 'kanban'
+  end
+
+  def board_type=(value)
+    options[:board_type] = BOARD_TYPES.include?(value.to_s) ? value.to_s : 'kanban'
+  end
+
+  # Ids of the statuses shown as columns. Empty means "every open status".
+  def board_status_ids
+    Array(options[:board_status_ids]).map(&:to_i).reject(&:zero?)
+  end
+
+  def board_status_ids=(ids)
+    options[:board_status_ids] = Array(ids).map(&:to_i).reject(&:zero?)
+  end
+
+  # {status_id => [min, max]}, either bound optional.
+  #
+  # Stored as a real hash of integer pairs, not as a string that would have to
+  # be re-parsed on every render.
+  def wip_limits
+    stored = options[:wip_limits] || {}
+    stored = stored.to_unsafe_h if stored.respond_to?(:to_unsafe_h)
+    stored.each_with_object({}) do |(status_id, bounds), acc|
+      min, max = Array(bounds)
+      acc[status_id.to_i] = [min.presence && min.to_i, max.presence && max.to_i]
+    end
+  end
+
+  def wip_limits=(limits)
+    # Accepts both a plain hash and ActionController::Parameters, which is not
+    # a Hash and does not implement each_with_object — the options panel posts
+    # the latter.
+    source = limits.respond_to?(:to_unsafe_h) ? limits.to_unsafe_h : (limits || {})
+    normalized = source.each_with_object({}) do |(status_id, bounds), acc|
+      min, max = Array(bounds)
+      min = min.presence && min.to_i
+      max = max.presence && max.to_i
+      acc[status_id.to_i] = [min, max] if min || max
+    end
+    options[:wip_limits] = normalized
+  end
+
+  def color_base
+    value = options[:color_base].to_s
+    RedmineExpertAgile::COLOR_BASES.include?(value) ? value : RedmineExpertAgile.color_base
+  end
+
+  def color_base=(value)
+    options[:color_base] = value.to_s
+  end
+
+  # Swimlanes reuse Redmine's grouping, so this is just `group_by` under a name
+  # that matches what the UI calls it.
+  def swimlane_field
+    group_by
+  end
+
+  def swimlane_field=(value)
+    self.group_by = value
+  end
+
+  # Card fields are the query's own selected columns, so the standard Redmine
+  # column picker in the options panel configures them — including custom
+  # fields — with no parallel mechanism to keep in sync.
+  def card_columns
+    columns
+  end
+
+  # Adds the board's own card field. Time in status has no equivalent in
+  # Redmine, and it is board-only on purpose — it is answered from a grouped
+  # query over the board's issues, which the issue list has no equivalent of.
+  def available_columns
+    return @available_columns if @available_columns
+
+    columns = super
+    unless columns.any? { |column| column.name == :day_in_state }
+      columns << QueryColumn.new(:day_in_state, :sortable => false, :groupable => false,
+                                                :caption => :label_expert_agile_day_in_state)
+    end
+    # The epic badge and the epic swimlanes. Offered only while some tracker
+    # is an epic tracker; a board that kept either after epics were switched
+    # off simply drops it.
+    if RedmineExpertAgile::Epics.enabled? && columns.none? { |column| column.name == :epic }
+      columns << RedmineExpertAgile::EpicQueryColumn.new(self)
+    end
+    # A story's subtasks, done and open, on its card.
+    unless columns.any? { |column| column.name == :subtasks }
+      columns << QueryColumn.new(:subtasks, :sortable => false, :groupable => false,
+                                            :caption => :label_expert_agile_subtasks)
+    end
+    @available_columns = columns
+  end
+
+  # The board's default card fields come from the plugin setting rather than
+  # from Setting.issue_list_default_columns, which is tuned for a table.
+  def default_columns_names
+    @default_columns_names ||= RedmineExpertAgile.default_card_columns
+  end
+
+  # Show the assignee's avatar on the card.
+  def show_avatar?
+    value = options[:show_avatar]
+    value.nil? ? true : value.to_s == '1'
+  end
+
+  def show_avatar=(value)
+    options[:show_avatar] = value.to_s == '1' ? '1' : '0'
+  end
+
+  # Extra card fields, i.e. everything not already drawn as a dedicated part of
+  # the card.
+  def extra_card_columns
+    card_columns.reject { |column| SPECIAL_CARD_COLUMNS.include?(column.name) }
+  end
+
+  # The board-specific settings, as a small plain hash, for stashing in the
+  # session between requests. Deliberately not the whole `options` blob.
+  BOARD_SESSION_KEYS = %i(board_status_ids wip_limits color_base board_type
+                          show_avatar sprint_id backlog_enabled hide_epics).freeze
+
+  # Read through this rather than the constant, so a subclass with settings of
+  # its own can add them to what survives a request.
+  def self.session_option_keys
+    BOARD_SESSION_KEYS
+  end
+
+  def board_session_options
+    self.class.session_option_keys.each_with_object({}) do |key, acc|
+      value = options[key]
+      acc[key] = value unless value.nil?
+    end
+  end
+
+  def restore_board_options(stored)
+    return self if stored.blank?
+
+    permitted = self.class.session_option_keys
+    stored.each do |key, value|
+      next unless permitted.include?(key.to_sym)
+
+      options[key.to_sym] = value
+    end
+    self
+  end
+
+  # Applies the board-specific parts of the options panel. Redmine's own
+  # build_from_params covers filters, columns, grouping and sorting; these are
+  # the settings core knows nothing about.
+  def apply_board_params(params)
+    self.board_status_ids = params[:board_status_ids] if params.key?(:board_status_ids)
+    self.wip_limits = params[:wip_limits] if params.key?(:wip_limits)
+    self.color_base = params[:color_base] if params[:color_base].present?
+    self.board_type = params[:board_type] if params[:board_type].present?
+    self.show_avatar = params[:show_avatar] if params.key?(:show_avatar)
+    self.sprint_id = params[:sprint_id] if params.key?(:sprint_id)
+    self.hide_epics = params[:hide_epics] if params.key?(:hide_epics)
+    self
+  end
+
+  # The sprint the board is narrowed to: nil for every issue, a sprint id, or
+  # SPRINT_ACTIVE to follow whichever sprint is running — so a saved sprint
+  # board never has to be re-pointed at the start of each iteration.
+  def sprint_id
+    value = options[:sprint_id]
+    return SPRINT_ACTIVE if value.to_s == SPRINT_ACTIVE
+
+    value.presence && value.to_i
+  end
+
+  def sprint_id=(value)
+    remove_instance_variable(:@board_sprint) if defined?(@board_sprint)
+    # Normalised to a string first: a crafted `sprint_id[]=41` arrives as an
+    # Array, which has no to_i. Anything that is not an id becomes 0, which
+    # resolves to no sprint and so to an empty board, like any other bad id.
+    value = value.to_s.strip
+    options[:sprint_id] = value == SPRINT_ACTIVE ? SPRINT_ACTIVE : (value.presence && value.to_i)
+  end
+
+  def follows_active_sprint?
+    sprint_id == SPRINT_ACTIVE
+  end
+
+  # Sprints the board may be narrowed to: the ones this project may plan into,
+  # closed ones included so a finished sprint can still be reviewed.
+  def available_board_sprints
+    board_sprint_candidates.sorted.to_a
+  end
+
+  # The sprint the board actually shows, or nil.
+  #
+  # An id is resolved against the sprints this project may plan into, never
+  # looked up bare: a crafted or stale id (a sprint of an unrelated project, a
+  # deleted one) resolves to nil. In
+  # active mode the project's own running sprint wins over one shared from
+  # elsewhere in the tree, since each project runs its own.
+  def board_sprint
+    return @board_sprint if defined?(@board_sprint)
+
+    @board_sprint =
+      if follows_active_sprint?
+        active = board_sprint_candidates.active
+        (project && active.find_by(:project_id => project.id)) || active.sorted.first
+      elsif sprint_id
+        board_sprint_candidates.find_by(:id => sprint_id)
+      end
+  end
+
+  def backlog_enabled?
+    options[:backlog_enabled].to_s == '1'
+  end
+
+  def backlog_enabled=(value)
+    options[:backlog_enabled] = value.to_s == '1' ? '1' : '0'
+  end
+
+  # --- Epics ---------------------------------------------------------
+
+  # Whether the epics themselves are left off the board. On unless switched
+  # off, so a board saved before epics existed hides them as well.
+  def hide_epics?
+    value = options[:hide_epics]
+    value.nil? ? true : value.to_s == '1'
+  end
+
+  def hide_epics=(value)
+    options[:hide_epics] = value.to_s == '1' ? '1' : '0'
+  end
+
+  # Whether cards carry their epic, i.e. the card field is switched on.
+  def card_epics?
+    RedmineExpertAgile::Epics.enabled? && has_column?(:epic)
+  end
+
+  # The epic one card shows, or nil while the card field is off.
+  def card_epic(issue)
+    card_epics? ? epic_of(issue) : nil
+  end
+
+  # The epic an issue belongs to, for the card badge and the epic swimlanes.
+  #
+  # Looked up for every card the board has loaded at once, the first time any
+  # card asks; a screen that renders cards from several lists (the backlog)
+  # hands each list to preload_card_epics first. A card asked about on its
+  # own — the one a move answers with — costs its own single query.
+  def epic_of(issue)
+    return nil if issue.nil? || !RedmineExpertAgile::Epics.enabled?
+
+    @card_epics ||= {}
+    load_for_board(@card_epics, issue) { |batch| RedmineExpertAgile::Epics.nearest(batch) }
+    @card_epics[issue.id]
+  end
+
+  # How far one epic is along (Epics::Progress), or nil for anything that
+  # is not an epic. Answered for every epic on screen at once — the board's
+  # epic lanes, the planner's epic lanes — the first time one is asked for.
+  def epic_progress(epic)
+    return nil unless epic.is_a?(Issue) && RedmineExpertAgile::Epics.enabled?
+
+    @epic_progress ||= {}
+    unless @epic_progress.key?(epic.id)
+      batch = epics_on_screen.reject { |other| @epic_progress.key?(other.id) }
+      batch << epic unless batch.include?(epic)
+      @epic_progress.merge!(RedmineExpertAgile::Epics.progress(batch))
+    end
+    @epic_progress[epic.id]
+  end
+
+  # The epics whose progress the page shows: the board's epic lanes.
+  def epics_on_screen
+    return [] unless grouped? && group_by_column.is_a?(RedmineExpertAgile::EpicQueryColumn)
+
+    swimlanes.select { |lane| lane.is_a?(Issue) }
+  end
+
+  def preload_card_epics(issues)
+    if card_epics?
+      @card_epics ||= {}
+      @card_epics.merge!(RedmineExpertAgile::Epics.nearest(issues))
+      @card_parents ||= {}
+      @card_parents.merge!(RedmineExpertAgile::Hierarchy.parents(issues))
+    end
+    if has_column?(:subtasks)
+      @card_children ||= {}
+      @card_children.merge!(RedmineExpertAgile::Hierarchy.children(issues))
+    end
+    issues
+  end
+
+  # The story a subtask card belongs to, shown after its epic: the card's
+  # parent, unless that parent is the epic itself. Comes with the epic card
+  # field, as the rest of the card's place in the tree.
+  def card_story(issue)
+    return nil unless card_epics? && issue.parent_id
+
+    @card_parents ||= {}
+    load_for_board(@card_parents, issue) { |batch| RedmineExpertAgile::Hierarchy.parents(batch) }
+    parent = @card_parents[issue.id]
+    parent && !RedmineExpertAgile::Epics.epic?(parent) ? parent : nil
+  end
+
+  # The subtasks a card lists, [] while the card field is off.
+  def card_subtasks(issue)
+    return [] unless has_column?(:subtasks)
+
+    @card_children ||= {}
+    load_for_board(@card_children, issue) { |batch| RedmineExpertAgile::Hierarchy.children(batch) }
+    @card_children[issue.id] || []
+  end
+
+  # --- Visibility ----------------------------------------------------
+
+  # Mirrors Query#editable_by? with the agile permission substituted.
+  #
+  # Ownership is what matters for a private board: an earlier version checked
+  # only the "save boards" permission, which meant anyone allowed to save a
+  # board of their own could also edit and delete everyone else's private ones.
+  # A global board (no project) stays admin-only, as in core.
+  def editable_by?(user)
+    return false unless user
+    return true if user.admin?
+    return true if user_id == user.id
+
+    is_public? && !is_global? && user.allowed_to?(:manage_public_expert_agile_queries, project)
+  end
+
+  # --- Columns -------------------------------------------------------
+
+  # The swimlanes a card may be dragged into, and the issue attribute such a
+  # drop writes. Dropping into someone's lane hands the card over, into a
+  # priority lane raises it, into a version lane plans it, into a category
+  # lane triages it: ordinary attributes the issue form edits too. Project,
+  # tracker, status and author are not on the list on purpose: they are not
+  # editable, or far too consequential for a drag, and a drop into one of
+  # their lanes is refused by name.
+  WRITABLE_SWIMLANES = {
+    'assigned_to' => 'assigned_to_id',
+    'category' => 'category_id',
+    'fixed_version' => 'fixed_version_id',
+    'priority' => 'priority_id',
+    # A lane per epic: the drop sets the parent, and only for an issue that
+    # hangs straight under an epic or under nothing (Epics.lane_refusal).
+    'epic' => 'parent_issue_id'
+  }.freeze
+
+  # The attribute a drop into a lane of this field writes, or nil.
+  def self.swimlane_attribute(field)
+    WRITABLE_SWIMLANES[field.to_s]
+  end
+
+  # Swimlanes are the records an issue belongs to — project, tracker, status,
+  # priority, author, assignee, category, target version. Core also groups by
+  # plain values (% done, start and due date, created / updated / closed on,
+  # the private flag) and by custom fields; none of those is a lane a team
+  # works in, and none is a value a card should ever be dragged into. They
+  # are not offered at all, and a saved board grouped by one shows ungrouped.
+  # The one lane that is no association is the epic: the record an issue
+  # belongs to there sits above it in the subtask tree.
+  def groupable_columns
+    super.select do |column|
+      column.is_a?(RedmineExpertAgile::EpicQueryColumn) ||
+        (!column.is_a?(QueryCustomFieldColumn) && Issue.reflect_on_association(column.name))
+    end
+  end
+
+  # --- Board scope ---------------------------------------------------
+
+  # The issues considered by this board, before column/swimlane bucketing.
+  def board_scope
+    board_filtered(base_scope)
+      .eager_load(:status, :project, :assigned_to, :tracker, :priority, :fixed_version,
+                  :expert_agile_data)
+      .where(:status_id => board_columns.map(&:id))
+  end
+
+  # --- Columns of the board ------------------------------------------
+
+  # The aggregates are memoised because one page build asks for them several
+  # times. A move invalidates them, and it does so before the move is written:
+  # board_scope asks board_columns for the status ids it filters on, so merely
+  # building the siblings scope fills the memo with the pre-move numbers.
+  # Whoever writes an issue through this query drops them afterwards.
+  def reset_board_aggregates!
+    @board_columns = nil
+    @issue_count_by_status = nil
+    @estimated_hours_by_status = nil
+    @story_points_by_status = nil
+    @card_epics = nil
+    @card_parents = nil
+    @card_children = nil
+    @epic_progress = nil
+    reset_board_grid!
+  end
+
+  def board_columns
+    @board_columns ||= begin
+      counts = issue_count_by_status
+      hours = estimated_hours_by_status
+      points = story_points_by_status
+      limits = wip_limits
+
+      board_statuses.map do |status|
+        min, max = limits[status.id]
+        RedmineExpertAgile::BoardColumn.new(
+          :status => status,
+          :issue_count => counts[status.id].to_i,
+          :estimated_hours => hours[status.id],
+          :story_points => points[status.id],
+          :wip_min => min,
+          :wip_max => max
+        )
+      end
+    end
+  end
+
+  # Statuses shown as columns, in Redmine's own status order.
+  #
+  # Scoped to the statuses this project's trackers can actually reach, via
+  # Redmine's own Project#rolled_up_statuses. Falling back to every open status
+  # in the instance produces a board of dozens of permanently empty columns —
+  # on a real installation that is 37 columns of which 3 are used, squeezed to
+  # 27px each.
+  #
+  # Closed statuses are excluded unless explicitly selected: a board is about
+  # work in flight. The "done" column is whichever closed status the project
+  # picks in the board settings.
+  def board_statuses
+    @board_statuses ||= begin
+      selected = board_status_ids
+      if selected.any?
+        IssueStatus.where(:id => selected).sorted.to_a
+      else
+        default_board_statuses
+      end
+    end
+  end
+
+  private
+
+  # Fills one per-card cache for every card the board has loaded that it
+  # does not hold yet, plus the card asked about — one query for a board.
+  def load_for_board(cache, issue)
+    return if cache.key?(issue.id)
+
+    batch = board_issues_loaded? ? board_issues.reject { |other| cache.key?(other.id) } : []
+    batch << issue unless batch.include?(issue)
+    cache.merge!(yield(batch))
+  end
+
+  # Everything the board narrows its issues by beyond the query's own filters.
+  # Counts, totals and cards all go through here, so the column headers never
+  # count a card the board does not show.
+  def board_filtered(scope)
+    epic_filtered(sprint_filtered(scope))
+  end
+
+  # Leaves the epics themselves off the board when it is asked to, as Jira
+  # does: an epic is a container of work, not a card that moves through it.
+  def epic_filtered(scope)
+    ids = RedmineExpertAgile::Epics.tracker_ids
+    return scope unless hide_epics? && ids.any?
+
+    scope.where.not(:tracker_id => ids)
+  end
+
+  # Narrows a scope to the board's sprint. A subquery rather than a join, so it
+  # composes with the scopes that already join agile data under an alias.
+  #
+  # A sprint that was asked for but does not resolve — a stale or crafted id,
+  # or active mode while no sprint is running — narrows to nothing: silently
+  # widening to every issue would pass the whole backlog off as the sprint.
+  def sprint_filtered(scope)
+    return scope unless sprint_id
+
+    sprint = board_sprint
+    return scope.none if sprint.nil?
+
+    scope.where(:id => ExpertAgileData.where(:sprint_id => sprint.id).select(:issue_id))
+  end
+
+  def board_sprint_candidates
+    project ? project.shared_expert_agile_sprints : ExpertAgileSprint.none
+  end
+
+  def default_board_statuses
+    scope = project ? project.rolled_up_statuses : IssueStatus.sorted
+    statuses = scope.reject(&:is_closed?)
+
+    # A project whose workflows define no transitions would otherwise render a
+    # board with no columns at all; fall back to the statuses actually in use.
+    if statuses.empty?
+      used_ids = base_scope.reorder(nil).distinct.pluck(:status_id)
+      statuses = IssueStatus.where(:id => used_ids).sorted.to_a
+    end
+    statuses
+  end
+
+  # base_scope already joins :status and :project, so grouping needs no extra
+  # join — status_id is a column on issues itself.
+  def grouped_issue_count(select_sql = nil)
+    scope = board_filtered(base_scope).reorder(nil).group("#{Issue.table_name}.status_id")
+    select_sql ? scope.sum(select_sql) : scope.count
+  end
+
+  def issue_count_by_status
+    @issue_count_by_status ||= grouped_issue_count
+  end
+
+  def estimated_hours_by_status
+    @estimated_hours_by_status ||= grouped_issue_count("#{Issue.table_name}.estimated_hours")
+  end
+
+  def story_points_by_status
+    @story_points_by_status ||=
+      board_filtered(base_scope).reorder(nil)
+                .joins("LEFT OUTER JOIN #{ExpertAgileData.table_name} ead " \
+                       "ON ead.issue_id = #{Issue.table_name}.id")
+                .group("#{Issue.table_name}.status_id")
+                .sum('ead.story_points')
+  end
+end

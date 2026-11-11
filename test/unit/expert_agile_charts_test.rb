@@ -1,0 +1,390 @@
+require File.expand_path('../../test_helper', __FILE__)
+
+# The chart classes, against hand-built histories with values worked out by
+# hand — a chart that renders is not the same as a chart that is right.
+class ExpertAgileChartsTest < ActiveSupport::TestCase
+  fixtures :projects, :users, :members, :member_roles, :roles,
+           :enabled_modules, :trackers, :projects_trackers, :issue_statuses,
+           :enumerations, :issues
+
+  Charts = RedmineExpertAgile::Charts
+
+  def setup
+    @project = Project.find(1)
+    @project.enable_module!(:expert_agile)
+    User.current = User.find(1)
+    @open_status = IssueStatus.where(:is_closed => false).first
+    @closed_status = IssueStatus.where(:is_closed => true).first
+    @from = Date.new(2026, 1, 1)
+    @to = Date.new(2026, 1, 5)
+  end
+
+  def teardown
+    User.current = nil
+    ExpertAgileData.delete_all
+  end
+
+  def at(date)
+    Time.utc(date.year, date.month, date.day, 12, 0, 0)
+  end
+
+  def issue_on(date, options = {})
+    issue = Issue.generate!({ :project_id => @project.id, :status_id => @open_status.id,
+                              :done_ratio => 0 }.merge(options))
+    issue.update_columns(:created_on => at(date), :updated_on => at(date))
+    issue.reload
+  end
+
+  def close!(issue, date)
+    journal = Journal.create!(:journalized => issue, :user => User.current)
+    journal.update_columns(:created_on => at(date))
+    JournalDetail.create!(:journal_id => journal.id, :property => 'attr', :prop_key => 'status_id',
+                          :old_value => @open_status.id.to_s, :value => @closed_status.id.to_s)
+    issue.update_columns(:status_id => @closed_status.id, :closed_on => at(date))
+    issue.reload
+  end
+
+  def chart_options(extra = {})
+    { :date_from => @from, :date_to => @to }.merge(extra)
+  end
+
+  # --- Burndown ---------------------------------------------------------
+
+  def test_burndown_counts_open_issues_per_day
+    a = issue_on(@from)
+    issue_on(@from)
+    close!(a, Date.new(2026, 1, 3))
+
+    data = Charts::Burndown.new([a.reload, Issue.find(Issue.maximum(:id))], chart_options).data
+    remaining = data[:datasets].first[:data]
+
+    assert_equal 5, data[:labels].size, 'one label per day, inclusive'
+    assert_equal [2.0, 2.0, 1.0, 1.0, 1.0], remaining
+  end
+
+  def test_burndown_in_story_points_weights_by_points
+    a = issue_on(@from)
+    b = issue_on(@from)
+    ExpertAgileData.create!(:issue_id => a.id, :story_points => 5)
+    ExpertAgileData.create!(:issue_id => b.id, :story_points => 3)
+    close!(a, Date.new(2026, 1, 3))
+
+    data = Charts::Burndown.new([a.reload, b.reload],
+                                chart_options(:unit => 'story_points')).data
+
+    assert_equal [8.0, 8.0, 3.0, 3.0, 3.0], data[:datasets].first[:data]
+  end
+
+  def test_burndown_ideal_line_starts_at_the_total_and_ends_at_zero
+    issue_on(@from)
+    issues = [Issue.find(Issue.maximum(:id))]
+
+    ideal = Charts::Burndown.new(issues, chart_options).data[:datasets].last[:data]
+
+    assert_equal 1.0, ideal.first
+    assert_equal 0.0, ideal.last
+    assert_equal ideal.sort.reverse, ideal, 'the ideal line only descends'
+  end
+
+  # --- Cumulative flow --------------------------------------------------
+
+  def test_cumulative_flow_spreads_its_palette_over_the_bands_it_draws
+    a = issue_on(@from)
+    close!(a, Date.new(2026, 1, 3))
+
+    datasets = Charts::CumulativeFlow.new([a.reload], chart_options).data[:datasets]
+    hues = datasets.map do |set|
+      match = set[:backgroundColor].to_s.match(/\Ahsla\((\d+),/)
+      # Without this the extraction would read a missing match as hue 0, and the
+      # first band's assertion below would hold for any colour format at all.
+      assert match, "expected an hsla() background, got #{set[:backgroundColor].inspect}"
+      match[1].to_i
+    end
+
+    assert_equal 2, datasets.size, 'one band per status the issue actually occupied'
+    # Two bands out of dozens of instance statuses must still land on opposite
+    # sides of the wheel, not on two neighbouring hues.
+    assert_equal [0, 180], hues
+  end
+
+  # --- Future data ------------------------------------------------------
+
+  def test_measured_series_stops_at_today_but_the_ideal_line_does_not
+    today = User.current.today
+    issue = issue_on(today - 2)
+    options = { :date_from => today - 2, :date_to => today + 2 }
+
+    data = Charts::Burndown.new([issue], options).data
+    remaining = data[:datasets].first[:data]
+    ideal = data[:datasets].last[:data]
+
+    assert_equal [1.0, 1.0, 1.0, nil, nil], remaining,
+                 'the measured line has no values for days that have not happened'
+    assert_not ideal.any?(&:nil?), 'the ideal line is a projection and spans the whole range'
+    assert_equal 0.0, ideal.last
+  end
+
+  def test_future_data_setting_draws_the_measured_series_to_the_end
+    today = User.current.today
+    issue = issue_on(today - 2)
+    options = { :date_from => today - 2, :date_to => today + 2 }
+
+    with_agile_settings('chart_future_data' => '1') do
+      remaining = Charts::Burndown.new([issue], options).data[:datasets].first[:data]
+
+      assert_equal [1.0, 1.0, 1.0, 1.0, 1.0], remaining
+    end
+  end
+
+  def test_cycle_time_keeps_every_point_when_the_range_runs_into_the_future
+    today = User.current.today
+    issues = 3.times.map { |i| issue_on(today - 10 - i) }
+    issues.each { |issue| close!(issue, today - 1) }
+
+    # A range ending in the future is the normal case for a running sprint, and
+    # this one is deliberately short: with buckets [today-1, today, today+1 …],
+    # the third point sits at index 2, which is a *future* bucket. Truncating
+    # this chart against the date axis would drop it, even though all three are
+    # closures that already happened.
+    data = Charts::CycleTime.new(issues.map(&:reload),
+                                 :date_from => today - 1, :date_to => today + 5).data
+
+    assert_equal 3, data[:labels].size
+    assert_equal 3, data[:datasets].first[:data].compact.size,
+                 'a measured point is not a date bucket and must survive a future date_to'
+    assert_equal 3, data[:datasets].last[:data].compact.size, 'the moving average survives too'
+  end
+
+  def test_a_week_bucket_containing_today_is_kept
+    today = User.current.today
+    issue = issue_on(today - 2)
+    options = { :date_from => today - 2, :date_to => today + 9, :interval => 'week' }
+
+    remaining = Charts::Burndown.new([issue], options).data[:datasets].first[:data]
+
+    assert_equal 1.0, remaining.first, 'the bucket today falls into is partial, not absent'
+    assert_nil remaining.last, 'a bucket starting after today has no value'
+  end
+
+  # --- Burnup -----------------------------------------------------------
+
+  def test_burnup_tracks_completed_against_scope
+    a = issue_on(@from)
+    b = issue_on(Date.new(2026, 1, 3))
+    close!(a, Date.new(2026, 1, 4))
+
+    data = Charts::Burnup.new([a.reload, b.reload], chart_options).data
+    completed = data[:datasets].first[:data]
+    scope = data[:datasets].last[:data]
+
+    assert_equal [0.0, 0.0, 0.0, 1.0, 1.0], completed
+    # Scope grows on the 3rd, when the second issue is created — which is the
+    # thing a burndown cannot show.
+    assert_equal [1.0, 1.0, 2.0, 2.0, 2.0], scope
+  end
+
+  # --- Cumulative flow ---------------------------------------------------
+
+  def test_cumulative_flow_counts_per_status
+    a = issue_on(@from)
+    close!(a, Date.new(2026, 1, 4))
+
+    data = Charts::CumulativeFlow.new([a.reload], chart_options).data
+    series = data[:datasets].map { |set| [set[:label], set[:data]] }.to_h
+
+    assert data[:stacked], 'a cumulative flow diagram is stacked'
+    assert_equal [1, 1, 1, 0, 0], series[@open_status.name]
+    assert_equal [0, 0, 0, 1, 1], series[@closed_status.name]
+  end
+
+  def test_cumulative_flow_omits_statuses_that_are_never_used
+    issue_on(@from)
+    data = Charts::CumulativeFlow.new([Issue.find(Issue.maximum(:id))], chart_options).data
+
+    assert_equal [@open_status.name], data[:datasets].map { |set| set[:label] }
+  end
+
+  # --- Velocity ----------------------------------------------------------
+
+  def test_velocity_buckets_created_and_closed
+    a = issue_on(@from)
+    close!(a, Date.new(2026, 1, 3))
+    b = issue_on(Date.new(2026, 1, 2))
+
+    data = Charts::Velocity.new([a.reload, b.reload], chart_options).data
+    created = data[:datasets].first[:data]
+    closed = data[:datasets].last[:data]
+
+    assert_equal [1, 1, 0, 0, 0], created
+    assert_equal [0, 0, 1, 0, 0], closed
+  end
+
+  def test_velocity_does_not_replay_history
+    # Counting charts work off created_on/closed_on, so they are not subject to
+    # the item cap.
+    assert_not Charts::Velocity.replays_history?
+    assert_not Charts::CycleTime.replays_history?
+    assert Charts::Burndown.replays_history?
+    assert Charts::CumulativeFlow.replays_history?
+  end
+
+  # --- Cycle time --------------------------------------------------------
+
+  def test_cycle_time_measures_creation_to_closure
+    a = issue_on(@from)
+    close!(a, Date.new(2026, 1, 4))
+
+    data = Charts::CycleTime.new([a.reload], chart_options).data
+
+    assert_equal [3.0], data[:datasets].first[:data]
+    assert_equal 3.0, data[:average]
+  end
+
+  def test_cycle_time_ignores_open_issues
+    issue_on(@from)
+
+    data = Charts::CycleTime.new([Issue.find(Issue.maximum(:id))], chart_options).data
+
+    assert_equal [], data[:datasets].first[:data]
+    assert_equal 0, data[:average]
+  end
+
+  # --- Registry ----------------------------------------------------------
+
+  def test_registry_resolves_only_known_charts
+    assert_equal Charts::Burndown, Charts::Registry.chart_class('burndown')
+    assert_nil Charts::Registry.chart_class('Kernel')
+    assert_nil Charts::Registry.chart_class('nonsense')
+    assert_not Charts::Registry.valid?('nonsense')
+  end
+
+  def test_every_registered_chart_produces_a_drawable_payload
+    Charts::Registry.names.each do |name|
+      chart = Charts::Registry.chart_class(name).new([issue_on(@from)], chart_options)
+      data = chart.data
+
+      assert data[:labels].is_a?(Array), "#{name} has no labels"
+      assert data[:datasets].is_a?(Array), "#{name} has no datasets"
+      data[:datasets].each do |set|
+        assert set[:data].is_a?(Array), "#{name} dataset #{set[:label]} has no data"
+        assert_match(/rgba?\(|hsla?\(/, set[:backgroundColor].to_s,
+                     "#{name} must use a fixed colour, never a random one")
+      end
+    end
+  end
+
+  # --- Query -------------------------------------------------------------
+
+  def test_chart_query_stores_the_date_range_explicitly
+    # Not recovered by regex-scraping generated SQL, which would break with any
+    # change to Redmine's sql_for_field.
+    query = ExpertAgileChartsQuery.new(:name => '_', :project => @project)
+    query.date_from = '2026-01-01'
+    query.date_to = '2026-01-31'
+    query.save!
+
+    reloaded = ExpertAgileChartsQuery.find(query.id)
+    assert_equal Date.new(2026, 1, 1), reloaded.date_from
+    assert_equal Date.new(2026, 1, 31), reloaded.date_to
+  end
+
+  def test_chart_query_falls_back_for_invalid_input
+    query = ExpertAgileChartsQuery.new(:name => '_', :project => @project)
+    query.date_from = 'not a date'
+    query.chart = 'nonsense'
+
+    assert_equal query.date_to - 29, query.date_from
+    assert_equal RedmineExpertAgile.default_chart, query.chart
+  end
+
+  # Every chart loads its issues in full, so every chart is capped: the
+  # counting ones used to be exempt and loaded every visible issue.
+  def test_item_cap_applies_to_every_chart
+    query = ExpertAgileChartsQuery.new(:name => '_', :project => @project)
+    issue_on(@from)
+
+    with_agile_settings('chart_items_limit' => '0') do
+      %w(burndown burnup cumulative_flow velocity cycle_time).each do |chart|
+        query.chart = chart
+        assert query.too_many_items?, "#{chart} must be capped"
+      end
+    end
+  end
+
+  def test_cache_key_changes_when_the_scope_changes
+    query = ExpertAgileChartsQuery.new(:name => '_', :project => @project)
+    query.chart = 'burndown'
+    before = query.cache_key
+
+    issue_on(@from)
+
+    assert_not_equal before, ExpertAgileChartsQuery.new(:name => '_', :project => @project)
+                                                   .tap { |q| q.chart = 'burndown' }.cache_key
+  end
+
+  # Same count, same latest update, different issues: the key must still differ,
+  # or a viewer who may not see an issue gets a chart built from it.
+  def test_cache_key_distinguishes_viewers_who_see_different_issues
+    first = issue_on(@from)
+    second = issue_on(@from)
+    [first, second].each { |i| i.update_columns(:updated_on => at(@from)) }
+    query = ExpertAgileChartsQuery.new(:name => '_', :project => @project)
+    query.chart = 'burndown'
+
+    only_first = query.send(:visible_issues_fingerprint, Issue.where(:id => first.id))
+    only_second = query.send(:visible_issues_fingerprint, Issue.where(:id => second.id))
+
+    assert_not_equal only_first, only_second
+    assert only_first.start_with?('1:'), 'the fingerprint still carries the count'
+  end
+
+  def test_cache_key_changes_with_the_viewers_time_zone
+    query = ExpertAgileChartsQuery.new(:name => '_', :project => @project)
+    query.chart = 'burndown'
+    user = User.current
+
+    # User#time_zone is memoised on the record, so each zone gets a freshly
+    # loaded user — as each request does.
+    user.pref.update!(:time_zone => 'Berlin')
+    User.current = User.find(user.id)
+    berlin = query.cache_key
+    user.pref.update!(:time_zone => 'Pacific Time (US & Canada)')
+    User.current = User.find(user.id)
+    pacific = query.cache_key
+
+    assert_not_equal berlin, pacific
+  ensure
+    user.pref.update!(:time_zone => nil) if user
+  end
+
+  def test_cache_key_changes_with_the_locale
+    query = ExpertAgileChartsQuery.new(:name => '_', :project => @project)
+    query.chart = 'cumulative_flow'
+
+    english = I18n.with_locale(:en) { query.cache_key }
+    german  = I18n.with_locale(:de) { query.cache_key }
+
+    assert_not_equal english, german, 'chart titles and series names are translated'
+  end
+
+  def test_cache_key_changes_when_a_status_is_renamed
+    query = ExpertAgileChartsQuery.new(:name => '_', :project => @project)
+    query.chart = 'cumulative_flow'
+    before = query.cache_key
+
+    IssueStatus.sorted.first.update!(:name => 'Renamed for the chart')
+
+    assert_not_equal before, query.cache_key, 'cumulative flow names its bands after the statuses'
+  end
+
+  def test_cache_key_changes_with_the_chart_settings
+    query = ExpertAgileChartsQuery.new(:name => '_', :project => @project)
+    query.chart = 'burndown'
+
+    plain    = with_agile_settings('exclude_weekends' => '0', 'chart_future_data' => '0') { query.cache_key }
+    weekends = with_agile_settings('exclude_weekends' => '1', 'chart_future_data' => '0') { query.cache_key }
+    future   = with_agile_settings('exclude_weekends' => '0', 'chart_future_data' => '1') { query.cache_key }
+
+    assert_equal 3, [plain, weekends, future].uniq.size
+  end
+end

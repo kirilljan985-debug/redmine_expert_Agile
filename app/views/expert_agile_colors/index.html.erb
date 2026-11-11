@@ -1,0 +1,45 @@
+<%# Admin: assign card colours to the objects a board can colour by. %>
+<h2><%= l(:label_expert_agile_colors) %></h2>
+
+<p>
+  <% ExpertAgileColor::COLORABLE_CLASSES.each do |param, class_name| %>
+    <%= link_to l("label_expert_agile_color_base_#{param}"),
+                expert_agile_colors_path(:container_type => param),
+                :class => (class_name == @container_class.name ? 'selected' : nil) %>
+  <% end %>
+</p>
+
+<%= form_tag update_expert_agile_colors_path(:container_type => params[:container_type]),
+              :method => :put, :data => { :ea_coloris => expert_agile_coloris_config.to_json } do %>
+  <table class="list">
+    <thead>
+      <tr>
+        <th><%= l(:field_name) %></th>
+        <th><%= l(:label_expert_agile_color) %></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @containers.each do |container| %>
+        <tr>
+          <td><%= h container.to_s %></td>
+          <td>
+            <%= render :partial => 'expert_agile_colors/picker',
+                       :locals => { :name => "colors[#{container.id}]",
+                                    :id => "colors_#{container.id}",
+                                    :selected => @colors[container.id],
+                                    :group_label => container.to_s } %>
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+
+  <p><%= submit_tag l(:button_save) %></p>
+<% end %>
+
+<%# This screen is not a board screen, so nothing else pulls the plugin's assets
+    in. Coloris is vendored and loaded here only. %>
+<% content_for :header_tags do %>
+  <%= stylesheet_link_tag 'coloris.min', 'expert_agile', :plugin => 'redmine_expert_agile' %>
+  <%= javascript_include_tag 'coloris.min', 'expert_agile_colors', :plugin => 'redmine_expert_agile' %>
+<% end %>

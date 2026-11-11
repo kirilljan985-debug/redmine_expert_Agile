@@ -1,0 +1,44 @@
+h3. Redmine expert Agile
+
+Agile boards for Redmine: a Kanban/Scrum board built on Redmine's own query system, story points, sprints with a backlog planner, epics, and charts.
+
+The board *is* a Redmine query. Every filter, column, grouping and visibility rule you already use on the issue list applies to a board unchanged, and a saved board is a single row in Redmine's @queries@ table — the plugin adds no query schema of its own.
+
+h3. Features
+
+* *Board* — columns from issue statuses, drag & drop that marks every column allowed or blocked by the workflow the moment a card is picked up, swimlanes by project, tracker, status, priority, author, assignee, category, target version or epic (a drop into an assignee, priority, category, target-version or epic lane sets that field, other lanes refuse it), advisory WIP limits, configurable card fields, sub-columns from a shared @Prefix:@ status naming, and saved boards.
+* *Story points* — stored per issue, offered as a configurable value list (modified Fibonacci by default), restrictable to selected trackers, and available as a sortable column and filter on the issue list.
+* *Sprints* — a first-class entity with start and end dates, an open/active/closed lifecycle, and Version-style sharing across a project tree. Redmine versions remain usable for planning alongside sprints. A board can be narrowed to one sprint, or follow whichever sprint is active. *Complete sprint* moves the open issues to the next sprint, the backlog or a new sprint, closes the sprint and can make the target the active one — in one step. The issue list gains a *Sprint* filter (including *Active sprint*) and a *Sprint* column that sorts, groups and exports.
+* *Epics* — Jira-style epics on top of Redmine's own subtask tree: pick the epic trackers, and an issue belongs to the nearest epic above it. With the optional *Epic* and *Subtasks* card fields, cards carry their epic as a coloured badge, a subtask names its story, and a story folds out its subtasks with their progress. Epic swimlanes and an epic planner move stories between epics; every epic shows its progress, and an *Epics* tab lists them as a tree. No table or custom field of its own, so Redmine's parent filter, the REST API and the Gantt chart see the same data.
+* *Backlog planner* — drag issues into sprints, versions or epics from a dedicated planning view, with the same filters and card fields as the board plus saved backlogs, behind its own project module.
+* *Charts* — burndown, burnup, cumulative flow, velocity and cycle time, in issues, hours or story points.
+* *Colours* — cards coloured by tracker, priority, status, project, assignee or spent time. Any colour can be picked in a colour picker that offers 18 palette shades as swatches, and a card's background tint stays light enough to read on whatever was chosen. Deliberately by what an issue is, never one issue at a time.
+* *REST API* — read *and write* agile data (story points, sprint assignment), plus full sprint CRUD.
+
+h3. Design notes
+
+A few deliberate choices, because they affect correctness rather than taste:
+
+* *Board ranks are fractional and computed on the server.* A move sends only the dragged card and its two neighbours, and writes one row once the cards around it carry ranks. Re-indexing a whole column in the browser loses concurrent moves and silently reorders cards that are paginated out of view.
+* *Chart history is reconstructed in a single pass* over one journal query and cached, rather than re-scanning every issue's journals once per date.
+* *No inline JavaScript.* Views render markup; data reaches the browser through a JSON island. The board works under a @script-src 'self'@ content security policy.
+* *No global monkeypatching* of @ActiveRecord::Base@ or @ApplicationController@.
+
+h3. Languages
+
+* User interface: English, German, Spanish, French, Italian and Portuguese (Portugal and Brazil); other languages fall back to English.
+* Documentation: English and German.
+
+h3. Requirements
+
+* Redmine 5.0 or newer (tested against 5.1, 6.0, 6.1 and 7.0)
+* Ruby 3.2+ / MySQL, MariaDB or PostgreSQL
+* No additional gems — Chart.js and the Coloris colour picker are vendored with the plugin
+
+h3. Links
+
+* "Source and issue tracker":https://github.com/expertZentrale/redmine_expert_agile
+* "Changelog":https://github.com/expertZentrale/redmine_expert_agile/blob/main/CHANGELOG.md
+* "REST API reference":https://github.com/expertZentrale/redmine_expert_agile/blob/main/API.md
+
+Licensed under the GPL-2.0-or-later. This is an independent implementation and contains no code from any other agile plugin.

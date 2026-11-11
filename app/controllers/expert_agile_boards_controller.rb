@@ -1,0 +1,605 @@
+# The agile board: rendering it, and moving cards on it.
+class ExpertAgileBoardsController < ApplicationController
+  menu_item :expert_agile
+
+  # Only where the URL names a project. The global board deliberately has none,
+  # and find_project_by_project_id answers Project.find(nil) with a 404 — which
+  # made the global route unreachable although authorize_global guards it.
+  before_action :find_project_by_project_id, :only => [:index, :create_issue],
+                :if => -> { params[:project_id].present? }
+  before_action :find_issue_for_board, :only => [:update, :edit_issue, :update_issue,
+                                                 :issue_tooltip, :agile_data, :update_agile_data]
+  # Every action but the board page is authorised against the issue's own
+  # project (find_issue_for_board sets it). The REST endpoints used to be
+  # exempt, which left reading and writing agile data to Issue#visible? and
+  # #editable? alone — and editable? is true for anyone who may add notes.
+  before_action :authorize, :except => [:index]
+  before_action :authorize_global, :only => [:index]
+
+  accept_api_auth :agile_data, :update_agile_data
+
+  helper :queries
+  helper :issues
+  helper :journals
+  helper :projects
+  helper :custom_fields
+  include QueriesHelper
+  # Every refusal a dragged card can meet has to come back as JSON.
+  include RedmineExpertAgile::CardMoveResponses
+
+  def index
+    retrieve_board_query
+    return render_error(:status => :unprocessable_entity) unless @query.valid?
+
+    @board_columns = @query.board_columns
+    @swimlanes = @query.swimlanes
+    respond_to do |format|
+      format.html { render :layout => 'base' }
+    end
+  end
+
+  # Drag & drop. The issue id is in the path, the destination in the body.
+  #
+  # The client reports only what it can know: the target column and the two
+  # cards the dragged card landed between. Everything else — the rank itself,
+  # whether the status change is legal — is decided here.
+  def update
+    unless @issue.editable?
+      return render_move_error(l(:error_expert_agile_issue_not_editable), :forbidden)
+    end
+
+    # The board script sends a lane only when the card left the one it was
+    # picked up from. Such a drop writes the field the lanes are grouped by,
+    # for the fields a drag may set. Any other lane is refused by name before
+    # anything is written, so the status change that came with the drop is
+    # refused as well rather than half the gesture being accepted. It used to
+    # be: the status was saved, the lane ignored, and the card drawn in a lane
+    # the database never put it in.
+    lane_attribute = nil
+    if params.key?(:swimlane_id)
+      lane_attribute = swimlane_column && ExpertAgileQuery.swimlane_attribute(swimlane_column.name)
+      return render_move_error(swimlane_not_writable_error, :unprocessable_entity) if lane_attribute.nil?
+      if lane_attribute == 'parent_issue_id'
+        if (refusal = RedmineExpertAgile::Epics.lane_refusal(@issue))
+          return render_move_error(l("error_expert_agile_epic_lane_#{refusal}"), :unprocessable_entity)
+        end
+        # The lane's id becomes the issue's parent, and Redmine's own parent
+        # rules accept any issue there. Only an epic the user may see is a
+        # lane to drop into; '' is the lane without one.
+        if requested_lane_value && !RedmineExpertAgile::Epics.epic?(Issue.visible.find_by(:id => requested_lane_value))
+          return render_move_error(l(:error_expert_agile_epic_lane_not_an_epic), :unprocessable_entity)
+        end
+      end
+    end
+
+    target_status_id = params[:status_id].presence && params[:status_id].to_i
+    if target_status_id && target_status_id != @issue.status_id
+      # `editable?` above only says the user may touch the issue at all, which
+      # adding notes is enough for, and the workflow below also counts roles
+      # that may merely add issues. The issue form additionally requires the
+      # right to edit the issue before it lets a status change through, so a
+      # move has to as well.
+      unless @issue.safe_attribute?('status_id', User.current)
+        return render_move_error(l(:error_expert_agile_status_not_editable), :forbidden)
+      end
+      unless status_allowed?(target_status_id)
+        # Enforced explicitly, before the save, rather than inferred afterwards
+        # from which attributes changed.
+        return render_move_error(status_transition_error(target_status_id),
+                                 :unprocessable_entity,
+                                 :hint => status_transition_hint,
+                                 :link => workflow_link)
+      end
+    end
+
+    retrieve_board_query_for_move
+    siblings = column_siblings(target_status_id || @issue.status_id)
+    # The parent before the move: a drop into another epic lane changes it,
+    # and the old parent's card then counts one subtask fewer.
+    @parent_id_before_move = @issue.parent_id
+    # The epic the card leaves, if it leaves one: its lane stays on screen
+    # even when this was its last card, and its bar has to follow.
+    @epic_left = lane_attribute == 'parent_issue_id' ? RedmineExpertAgile::Epics.nearest([@issue])[@issue.id] : nil
+
+    Issue.transaction do
+      @issue.init_journal(User.current)
+      @issue.status_id = target_status_id if target_status_id
+      if lane_attribute && !assign_lane(lane_attribute)
+        render_move_error(swimlane_field_not_editable_error, :forbidden)
+        raise ActiveRecord::Rollback
+      end
+      assign_to_current_user_if_configured(target_status_id)
+
+      unless @issue.save
+        # A refusal with an empty message reads as no refusal at all: the board
+        # falls back to its generic wording and the user is told nothing. A
+        # validation that produced no message is rare but not impossible — a
+        # callback from another plugin can abort a save silently.
+        reason = @issue.errors.full_messages.join(', ')
+        reason = l(:error_expert_agile_move_failed) if reason.blank?
+        render_move_error(reason, :unprocessable_entity)
+        raise ActiveRecord::Rollback
+      end
+
+      # A save that succeeded is not yet a status that changed: a callback from
+      # another plugin can put the old status back and still let the save pass.
+      # Answering 200 then draws the card in the new column, and the next reload
+      # moves it back — the one failure the user would never be told about.
+      # What counts is what the database holds.
+      if target_status_id && (kept = Issue.where(:id => @issue.id).pick(:status_id)) != target_status_id
+        render_move_error(status_not_kept_error(target_status_id, kept), :unprocessable_entity)
+        raise ActiveRecord::Rollback
+      end
+      # The lane, for the same reason: a card drawn in a lane it is not in is
+      # exactly what the drop used to leave behind. Measured against the lane
+      # the card was dropped into, not against the issue in memory: a
+      # before_save callback that puts the old value back changes both.
+      if lane_attribute && Issue.where(:id => @issue.id).pick(stored_lane_column(lane_attribute)) != requested_lane_value
+        render_move_error(swimlane_not_kept_error, :unprocessable_entity)
+        raise ActiveRecord::Rollback
+      end
+
+      # Same transaction as the issue save, so a failed rank write cannot leave
+      # the card in its new column unranked.
+      RedmineExpertAgile::BoardPositions.place!(
+        @issue,
+        :prev_issue => board_issue(params[:prev_id]),
+        :next_issue => board_issue(params[:next_id]),
+        :siblings => siblings
+      )
+    end
+    return if performed?
+
+    @issue.reload
+    @query.reset_board_aggregates!
+    respond_to do |format|
+      # Deliberately format.js, not format.json, even though the body is JSON.
+      # Redmine's find_current_user ignores the session for api_request? — which
+      # is any .json/.xml format — so a cookie-authenticated .json request is
+      # anonymous and 403s. Only the REST endpoints below, which declare
+      # accept_api_auth and authenticate by key, may use the API formats.
+      format.js { render :json => move_payload }
+      format.html { redirect_back_or_default project_expert_agile_board_path(@issue.project) }
+    end
+  end
+
+  def issue_tooltip
+    render :partial => 'expert_agile_boards/issue_tooltip', :locals => { :issue => @issue }
+  end
+
+  # --- REST API --------------------------------------------------------
+
+  def agile_data
+    respond_to do |format|
+      format.api
+    end
+  end
+
+  # Write agile data for one issue.
+  #
+  # Story points and sprint assignment are a first-class operation here, not
+  # only reachable through nested attributes on the issue endpoint.
+  def update_agile_data
+    # The same rule the issue form applies to these fields: `editable?` is
+    # already true for a user who may only add notes.
+    return head :forbidden unless @issue.safe_attribute?('expert_agile_data_attributes', User.current)
+
+    attributes = params[:expert_agile_data] || {}
+    # Planning into a sprint is the backlog planner's permission, here too.
+    if attributes.key?(:sprint_id) && !@issue.expert_agile_sprint_editable_by?(User.current)
+      return head :forbidden
+    end
+
+    @issue.init_journal(User.current)
+    data = @issue.expert_agile_data!
+
+    if attributes.key?(:sprint_id) && attributes[:sprint_id].present?
+      # Resolve against the sprints this issue's project may actually plan
+      # into, so an id from elsewhere cannot be written in.
+      sprint = @issue.project.shared_expert_agile_sprints.find_by(:id => attributes[:sprint_id])
+      return render_api_errors(l(:error_expert_agile_container_not_available)) if sprint.nil?
+
+      data.sprint_id = sprint.id
+    elsif attributes.key?(:sprint_id)
+      data.sprint_id = nil
+    end
+
+    data.story_points = attributes[:story_points].presence if attributes.key?(:story_points)
+
+    # Saved through the issue, as the backlog planner does, so the sprint
+    # change lands in the issue's history instead of being written silently.
+    if @issue.save
+      respond_to { |format| format.api { render_api_ok } }
+    else
+      respond_to { |format| format.api { render_validation_errors(@issue) } }
+    end
+  end
+
+  private
+
+  def find_issue_for_board
+    @issue = Issue.find(params[:id])
+    @project = @issue.project
+    raise ::Unauthorized unless @issue.visible?
+  rescue ActiveRecord::RecordNotFound
+    render_404
+  end
+
+  SESSION_KEY = :expert_agile_query
+
+  # The board being looked at.
+  #
+  # Mirrors Redmine's own retrieve_query: an explicit query_id wins, otherwise
+  # `set_filter` builds a board from the request, otherwise the last board is
+  # restored from the session. Without the session step, every option applied
+  # from the panel — statuses, WIP limits, swimlanes — would be lost the moment
+  # the page reloaded or the user came back via the menu, because those live in
+  # the URL and nowhere else.
+  #
+  # Note this is display state only. What a *move* is allowed to do never comes
+  # from here: the target status is checked against
+  # `issue.new_statuses_allowed_to` and the issue's own permissions; the session
+  # query never decides which columns exist for the move itself.
+  # The page carries the board's id, and the board can be deleted or turned
+  # private while that page is still open. Refusing the move over that would be
+  # answering the wrong question: which board is on screen only decides the
+  # cards the new rank is measured against, never whether the card may move.
+  #
+  # The board is rebuilt for the project it is shown in, not for the card's
+  # own project: on a parent project's board, grouped into swimlanes by
+  # project, a subproject card used to rebuild the board for that subproject
+  # alone. Every column count the move answered with was then that one lane's,
+  # and because the session board belonged to another project, the move also
+  # replaced it with a default board — which the next move from another lane
+  # swapped back, so the header flipped between a lane's count and the total.
+  # A move never writes the session board: it only reads the one on screen.
+  def retrieve_board_query_for_move
+    @board_project = board_project_for_move
+    retrieve_board_query(:persist => false)
+  rescue ActiveRecord::RecordNotFound
+    @query = ExpertAgileQuery.new(:name => '_', :project => board_project)
+  end
+
+  # The project whose board the card was dragged on, as the board script
+  # reports it — or nil for the global board. Taken only when the user may open
+  # that board: the global one needs the board permission globally, exactly as
+  # its page does, and a project board needs it in a project that contains the
+  # card. Anything else falls back to the card's own project, which is what the
+  # board did before it said — so the parameter can never widen what the
+  # counts are taken over beyond a board the user could load anyway.
+  def board_project_for_move
+    return @project unless params.key?(:board_project_id)
+
+    if params[:board_project_id].blank?
+      return User.current.allowed_to?(:view_expert_agile_board, nil, :global => true) ? nil : @project
+    end
+
+    board = Project.visible.find_by(:id => params[:board_project_id].to_s)
+    return @project unless board && @issue.project.is_or_is_descendant_of?(board)
+
+    User.current.allowed_to?(:view_expert_agile_board, board) ? board : @project
+  end
+
+  # The project the board is for. For a page that is the project in the URL;
+  # for a move it is the board the card was dragged on.
+  def board_project
+    defined?(@board_project) ? @board_project : @project
+  end
+
+  def retrieve_board_query(persist: true)
+    if params[:query_id].present?
+      @query = find_board_query(params[:query_id])
+      @query.project = board_project
+      # A saved board can still be tweaked for this request without the change
+      # being written back to it.
+      if params[:set_filter].present?
+        @query.build_from_params(params)
+        @query.apply_board_params(params)
+      end
+      session[SESSION_KEY] = { :id => @query.id, :project_id => @query.project_id } if persist
+    elsif params[:set_filter].present? || session_state_stale?
+      @query = ExpertAgileQuery.new(:name => '_', :project => board_project)
+      @query.build_from_params(params)
+      @query.apply_board_params(params)
+      store_board_session_state if persist
+    else
+      @query = restore_board_from_session(:persist => persist)
+    end
+    @query
+  end
+
+  # Through `visible`, so a guessed id cannot open somebody else's private
+  # board. Without it the id is the only thing standing between a project member
+  # and another user's saved filter set.
+  #
+  # Both ways in go through here. The session carries only an id, and a session
+  # outlives the query it points at: an owner turning a shared board private, or
+  # a role losing the permission, has to take effect on the next request rather
+  # than whenever the user next happens to pass a query_id.
+  # `only_boards`, because charts and backlogs are STI subclasses: an unqualified
+  # ExpertAgileQuery lookup matches them too, and `visible` would then gate them
+  # on *this* class's view_permission — the board's. A user with board access but
+  # no backlog or charts permission could otherwise resolve one by id.
+  def visible_board_query(id)
+    scope = ExpertAgileQuery.only_boards.visible
+    scope = scope.global_or_on_project(board_project) if board_project
+    scope.find_by(:id => id)
+  end
+
+  def find_board_query(id)
+    visible_board_query(id) || raise(ActiveRecord::RecordNotFound)
+  end
+
+  def session_state_stale?
+    state = session[SESSION_KEY]
+    state.nil? || state[:project_id] != (board_project ? board_project.id : nil)
+  end
+
+  # Only what is needed to rebuild the board, not the whole options blob.
+  # The whole serialized options hash plus every filter could push the cookie
+  # session past its 4 KB limit on a large filter set.
+  def store_board_session_state
+    session[SESSION_KEY] = {
+      :project_id => @query.project_id,
+      :filters => @query.filters,
+      :group_by => @query.group_by,
+      :column_names => @query.column_names,
+      :sort => @query.sort_criteria.to_a,
+      :board => @query.board_session_options
+    }
+  end
+
+  def restore_board_from_session(persist: true)
+    state = session[SESSION_KEY]
+    if state[:id]
+      saved = visible_board_query(state[:id])
+      if saved
+        saved.project = board_project
+        return saved
+      end
+      # Deleted since, or no longer visible to this user; fall through to a
+      # fresh one rather than showing a board they may no longer open. Only a
+      # page load forgets it: a move reads the session and never writes it.
+      session[SESSION_KEY] = nil if persist
+      return ExpertAgileQuery.new(:name => '_', :project => board_project)
+    end
+
+    query = ExpertAgileQuery.new(:name => '_', :project => board_project)
+    query.filters = state[:filters] || {}
+    query.group_by = state[:group_by]
+    query.column_names = state[:column_names]
+    query.sort_criteria = state[:sort] if state[:sort].present?
+    query.restore_board_options(state[:board])
+    query
+  end
+
+  # Read once per request: the check asks for it, and a refusal asks again to
+  # say what is open instead. Neither the issue nor the user changes in between,
+  # and the lookup walks the workflow table.
+  def allowed_statuses
+    @allowed_statuses ||= @issue.new_statuses_allowed_to(User.current)
+  end
+
+  def status_allowed?(status_id)
+    allowed_statuses.map(&:id).include?(status_id)
+  end
+
+  # A refusal in the terms the workflow is written in — this tracker, from this
+  # status to that one. "Not allowed" on its own leaves a user guessing whether
+  # they dropped the card in the wrong column, lack a permission, or hit a rule,
+  # and leaves an administrator with nowhere to start looking.
+  def status_transition_error(target_status_id)
+    target = IssueStatus.find_by(:id => target_status_id)
+
+    l(:error_expert_agile_status_transition_not_allowed,
+      :tracker => @issue.tracker.name,
+      :from => @issue.status.name,
+      :to => target ? target.name : target_status_id)
+  end
+
+  # A status change the save let through and something else undid.
+  def status_not_kept_error(target_status_id, kept_status_id)
+    target = IssueStatus.find_by(:id => target_status_id)
+    kept = IssueStatus.find_by(:id => kept_status_id)
+
+    l(:error_expert_agile_status_not_kept,
+      :to => target ? target.name : target_status_id,
+      :status => kept ? kept.name : kept_status_id)
+  end
+
+  # What the user *can* do from here, which is the part that turns the refusal
+  # into something to act on. The current status is dropped from the list:
+  # Redmine includes it, and "you may move it to where it already is" is noise.
+  def status_transition_hint
+    allowed = allowed_statuses.reject { |status| status.id == @issue.status_id }
+
+    if allowed.any?
+      l(:text_expert_agile_transitions_allowed,
+        :from => @issue.status.name, :statuses => allowed.map(&:name).join(', '))
+    else
+      l(:text_expert_agile_transitions_none, :from => @issue.status.name)
+    end
+  end
+
+  # Straight to the workflow of this tracker, for administrators only — they are
+  # the only ones who can change it and the only ones the page opens for. The
+  # role is a starting point, not a claim: a transition can be missing for one
+  # of several roles, and the page lets them switch.
+  def workflow_link
+    return nil unless User.current.admin?
+
+    role = User.current.roles_for_project(@issue.project).first || Role.givable.first
+    return nil if role.nil?
+
+    { :label => l(:label_expert_agile_edit_workflow),
+      :url => edit_workflows_path(:role_id => role.id, :tracker_id => @issue.tracker_id,
+                                  :used_statuses_only => '0') }
+  end
+
+  # Optional convenience: claim an unassigned card by moving it. Only when the
+  # status actually changes, and never overrides an existing assignee.
+  def assign_to_current_user_if_configured(target_status_id)
+    return unless RedmineExpertAgile.auto_assign_on_move?
+    # The board posts the drop column as status_id on every move, a reorder
+    # inside the same column included, so the posted value alone does not say
+    # the status changed. The status is set just before this runs.
+    return unless target_status_id && @issue.status_id_changed?
+    return if @issue.assigned_to_id.present?
+    # Dropped into the unassigned lane: the user said who it belongs to.
+    return if @issue.assigned_to_id_changed?
+    # The issue form's rule for the field: the right to edit the issue, and the
+    # assignee not made read-only by the workflow for this user.
+    return unless @issue.safe_attribute?('assigned_to_id', User.current)
+    return unless @issue.assignable_users.include?(User.current)
+
+    @issue.assigned_to_id = User.current.id
+  end
+
+  # Issues of the destination column in rank order, used only when a collapsed
+  # gap forces a rebalance.
+  def column_siblings(status_id)
+    @query.board_scope
+          .where(:status_id => status_id)
+          .where.not(:id => @issue.id)
+          .sorted_by_rank
+  rescue StandardError
+    # Visible issues only: a rebalance writes the rank of every sibling.
+    Issue.visible.where(:status_id => status_id, :project_id => @issue.project_id).sorted_by_rank
+  end
+
+  # A neighbour the client names. Only a visible one counts: the rank is
+  # computed from its position, which must not be taken from an issue the user
+  # cannot see.
+  def board_issue(id)
+    return nil if id.blank?
+
+    Issue.visible.where(:id => id).first
+  end
+
+  # The field the page's lanes are grouped by, as the board script reports it,
+  # or nil for an ungrouped page. Only a field the board offers as swimlanes
+  # counts. Taken from the page rather than from the rebuilt board, so the
+  # lanes a move answers with are the ones on screen even when the session
+  # board has been regrouped in another tab since.
+  def swimlane_column
+    return @swimlane_column if defined?(@swimlane_column)
+
+    field = params[:swimlane_field].to_s
+    @swimlane_column = field.present? ? swimlane_columns.detect { |column| column.name.to_s == field } : nil
+  end
+
+  def swimlane_columns
+    ExpertAgileQuery.new(:project => @project).groupable_columns
+  end
+
+  def swimlane_field_label
+    column = swimlane_column
+    column ? column.caption : params[:swimlane_field].to_s.humanize
+  end
+
+  def swimlane_not_writable_error
+    l(:error_expert_agile_swimlane_not_writable, :field => swimlane_field_label)
+  end
+
+  def swimlane_field_not_editable_error
+    l(:error_expert_agile_swimlane_field_not_editable, :field => swimlane_field_label)
+  end
+
+  def swimlane_not_kept_error
+    l(:error_expert_agile_swimlane_not_kept, :field => swimlane_field_label)
+  end
+
+  # Writes the lane the card was dropped into, '' being the "no value" lane.
+  # Through safe_attributes= and after the status is set, as the issue form
+  # does it, so the workflow's read-only fields for the new status and the
+  # right to edit the issue apply exactly as they do there. Whether the value
+  # is one the issue may take (a category of its project, a version it may be
+  # planned into, a user it may be assigned to) is left to the issue's own
+  # validation, which the save reports. False when the field may not be set.
+  def assign_lane(attribute)
+    return false unless @issue.safe_attribute?(attribute, User.current)
+
+    # send, because `a.b = x, y` would pass [x, y] as one argument.
+    @issue.send(:safe_attributes=, { attribute => params[:swimlane_id].to_s }, User.current)
+    @issue.send(attribute) == requested_lane_value
+  end
+
+  # The column the lane value is stored in. Every writable lane writes its own
+  # column, except the epic: it is set through `parent_issue_id`, which the
+  # issue keeps in `parent_id`.
+  def stored_lane_column(attribute)
+    attribute == 'parent_issue_id' ? 'parent_id' : attribute
+  end
+
+  # The id of the lane the card was dropped into, nil for the "no value" lane.
+  def requested_lane_value
+    params[:swimlane_id].to_s.presence&.to_i
+  end
+
+  # The moved card plus fresh column aggregates, so the board can swap one card
+  # and update the headers instead of reloading.
+  def move_payload
+    payload = {
+      :issueId => @issue.id,
+      :statusId => @issue.status_id,
+      :card => render_to_string(:partial => 'expert_agile_boards/issue_card',
+                                :locals => { :issue => @issue },
+                                :formats => [:html]),
+      :columns => @query.board_columns.map(&:to_h)
+    }
+    # A card counts its subtasks, done and open. Moving a subtask can change
+    # that count for its parent — and a drop into another epic lane for the
+    # parent it left as well — so those cards come along, drawn afresh.
+    parent_ids = [@issue.parent_id, @parent_id_before_move].compact.uniq
+    if parent_ids.any? && @query.has_column?(:subtasks)
+      payload[:relatedCards] = Issue.visible.where(:id => parent_ids).map do |parent|
+        { :issueId => parent.id,
+          :card => render_to_string(:partial => 'expert_agile_boards/issue_card',
+                                    :locals => { :issue => parent }, :formats => [:html]) }
+      end
+    end
+    # The card goes into the cell of the lane it now belongs to, and the lane
+    # bands are refreshed. A move can change the lane without being dropped
+    # into another one: claiming a card on a board grouped by assignee does.
+    # Only after the card is rendered: its drop preview preloads the whole
+    # board once the board's issues are loaded.
+    if swimlane_column
+      @query.group_by = swimlane_column.name.to_s
+      payload[:swimlaneId] = @query.swimlane_dom_id_for(@issue)
+      lanes = @query.swimlane_summaries
+      # A lane the answer does not list holds no card any more, and the board
+      # zeroes its counts — but an epic's bar measures everything below the
+      # epic, not just the cards on screen.
+      if @epic_left && lanes.none? { |lane| lane[:id] == @epic_left.id.to_s }
+        lanes << { :id => @epic_left.id.to_s, :issue_count => 0, :story_points => 0,
+                   :progress => @query.epic_progress(@epic_left) }
+      end
+      payload[:lanes] = lanes.map do |lane|
+        lane[:progress] ? lane.merge(:progress => helpers.expert_agile_epic_progress_data(lane[:progress])) : lane
+      end
+    end
+    payload
+  end
+
+  # A plain JSON contract for success and failure alike, so the client never
+  # has to sniff whether it got HTML or JSON.
+  # Where CardMoveResponses puts the refusals it takes over from Redmine.
+  def render_card_move_refusal(message, status)
+    render_move_error(message, status)
+  end
+
+  def render_move_error(message, status, hint: nil, link: nil)
+    @error_message = [message, hint].compact.join('. ')
+    respond_to do |format|
+      format.js do
+        render :json => { :error => message, :hint => hint, :link => link }.compact,
+               :status => status
+      end
+      format.html do
+        flash[:error] = @error_message
+        redirect_back_or_default project_expert_agile_board_path(@issue.project)
+      end
+      format.api { render_api_errors(message) }
+    end
+  end
+end

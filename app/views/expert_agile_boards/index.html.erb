@@ -1,0 +1,103 @@
+<%# The agile board.
+    Markup only — no inline <script> anywhere in this view or the partials it
+    renders. Everything the board script needs is in the JSON island below,
+    which keeps the page working under a `script-src 'self'` policy. %>
+
+<h2><%= @query.new_record? ? l(:label_expert_agile_board) : h(@query.name) %></h2>
+
+<%= form_tag(board_path_for(@project), :method => :get, :id => 'ea_query_form') do %>
+  <%= render :partial => 'expert_agile_boards/board_form' %>
+<% end %>
+
+<% if @query.truncated? %>
+  <p class="warning ea-truncated">
+    <%= l(:label_expert_agile_board_truncated, :count => RedmineExpertAgile.board_items_limit) %>
+  </p>
+<% end %>
+
+<div id="ea-board"
+     class="ea-board"
+     data-ea-board="1">
+  <table class="ea-board-table">
+    <thead>
+      <% expert_agile_header_rows(@board_columns).each do |row| %>
+        <tr>
+          <% row.each do |cell| %>
+            <th class="ea-column-header <%= cell[:column] && cell[:column].wip_css_class %> <%= expert_agile_status_color_class(cell[:column]) %>"<%= expert_agile_style_attribute(expert_agile_status_style(cell[:column])) %>
+                colspan="<%= cell[:colspan] %>"
+                rowspan="<%= cell[:rowspan] %>"
+                <% if cell[:column] %>data-column-id="<%= cell[:column].id %>"<% end %>>
+              <span class="ea-column-name"><%= cell[:label] %></span>
+              <% if cell[:column] %>
+                <span class="ea-column-count"><%= cell[:column].issue_count %></span>
+                <% if cell[:column].wip_limit? %>
+                  <span class="ea-column-wip" title="<%= l(:label_expert_agile_wip_limit) %>">
+                    <%= cell[:column].wip_label %>
+                  </span>
+                <% end %>
+              <% end %>
+            </th>
+          <% end %>
+        </tr>
+      <% end %>
+    </thead>
+
+    <tbody>
+      <%# Not any?: a board where no issue has a value for the field has one lane,
+            nil, and [nil].any? is false — it dropped the grouping without a word. %>
+      <% unless @swimlanes.empty? %>
+        <% @swimlanes.each do |swimlane| %>
+          <%# A band across the full width of the board, then the lane's cells
+              beneath it. A narrow label cell on the left does not read as a
+              lane — the eye has nothing tying the row together across the
+              columns. %>
+          <tr class="ea-swimlane-title <%= expert_agile_swimlane_color_class(swimlane) %>"<%= expert_agile_style_attribute(expert_agile_swimlane_style(swimlane)) %>
+              data-swimlane-id="<%= @query.swimlane_dom_id(swimlane) %>">
+            <th colspan="<%= @board_columns.size %>">
+              <span class="ea-swimlane-name">
+                <%= expert_agile_swimlane_label(swimlane) %>
+              </span>
+              <%= expert_agile_epic_progress(@query.epic_progress(swimlane)) %>
+              <% totals = @query.swimlane_totals(swimlane) %>
+              <span class="ea-swimlane-totals">
+                <span class="ea-swimlane-count" title="<%= l(:label_issue_plural) %>">
+                  <%= totals[:issue_count] %>
+                </span>
+                <%# Always there, hidden while empty, so a move that brings the
+                    lane its first points has a place to put them. %>
+                <span class="ea-swimlane-points" title="<%= l(:label_expert_agile_story_points) %>"<%= ' hidden' if totals[:story_points].to_i <= 0 %>>
+                  <%= totals[:story_points] %>
+                </span>
+              </span>
+            </th>
+          </tr>
+          <tr class="ea-swimlane <%= expert_agile_swimlane_color_class(swimlane) %>"<%= expert_agile_style_attribute(expert_agile_swimlane_style(swimlane)) %>>
+            <%= render :partial => 'expert_agile_boards/cells',
+                       :locals => { :swimlane => swimlane } %>
+          </tr>
+        <% end %>
+      <% else %>
+        <tr class="ea-swimlane">
+          <%= render :partial => 'expert_agile_boards/cells',
+                     :locals => { :swimlane => :none } %>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>
+
+<%# JSON island: read by expert_agile_board.js, never executed as script. %>
+<script type="application/json" id="ea-board-data"><%= expert_agile_board_data(@query, @project).html_safe %></script>
+
+<% content_for :sidebar do %>
+  <%= render :partial => 'expert_agile_common/sidebar',
+             :locals => { :sidebar_query_class => ExpertAgileQuery,
+                          :sidebar_title => l(:label_expert_agile_board_plural) } %>
+<% end %>
+
+<% content_for :header_tags do %>
+  <%= stylesheet_link_tag 'expert_agile', :plugin => 'redmine_expert_agile' %>
+  <%= javascript_include_tag 'expert_agile_board', :plugin => 'redmine_expert_agile' %>
+<% end %>
+
+<% html_title(l(:label_expert_agile_board)) %>
